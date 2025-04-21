@@ -2,7 +2,7 @@ import os
 import time
 import numpy as np
 import path_process
-import data_parse_3d
+import points.points_io
 import data_eval_3d
 
 
