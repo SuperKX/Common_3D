@@ -1,14 +1,18 @@
 # Common_3D
-三维数据处理库
+三维数据处理库，本人用
 
-## path
+## 1 环境配置
+
+
+## 2 模块功能
+### path
 路径处理相关功能
 
-## points
+### points
 点云相关功能
 
-## mesh
+### mesh
 网格相关功能
 
-## application
+### application
 业务功能

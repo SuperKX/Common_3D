@@ -1,9 +1,9 @@
 import os
 import time
 import numpy as np
-import path_process
-import points.points_io
-import data_eval_3d
+import path.path_process
+import points.points_io as pts_io
+import points.points_eval as pts_eval
 
 
 
