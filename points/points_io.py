@@ -118,4 +118,3 @@ def parse_3d_cloud_file(file_path):
         return parse_pcd_file(file_path)
     else:
         raise TypeError(f'输入文件格式 {file_extention} ,未处理')
-
