@@ -12,7 +12,7 @@
 import os
 import plyfile
 import numpy as np
-from pypcd import pypcd
+import pypcd
 
 # 可能表示标签的字段
 label_fields = ['class', 'scalar_class', 'label', 'scalar_label', 'labels', 'scalar_labels']
@@ -118,3 +118,38 @@ def parse_3d_cloud_file(file_path):
         return parse_pcd_file(file_path)
     else:
         raise TypeError(f'输入文件格式 {file_extention} ,未处理')
+
+def write_ply_file(file_path,cloud_ndarray):
+    '''
+    读入的ndarray写出ply文件
+    file_path 地址
+    cloud_ndarray nd格式点云信息
+    注意：
+        1）当前写死格式【坐标、颜色、标签】，后面需要改为动态处理
+        2) 二进制还是 ascii
+    '''
+    try:
+        num_points = cloud_ndarray.shape[0]
+        np.savetxt(file_path, cloud_ndarray, fmt='%f %f %f %d %d %d %i')
+        # 定义 PLY 文件头
+        header = f"""ply
+format ascii 1.0
+element vertex {num_points}
+property float x
+property float y
+property float z
+property int red
+property int green
+property int blue
+property int class
+end_header
+"""
+        with open(file_path, 'r+') as f:
+            old = f.read()
+            f.seek(0)
+            f.write(header)
+            f.write(old)
+        print(f"合并后的带标签点云已成功保存到 {file_path}")
+
+    except Exception as e:
+        print(f"保存文件时出现错误: {e}")

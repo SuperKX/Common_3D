@@ -1,7 +1,24 @@
 import open3d as o3d
 import numpy as np
 
-def crop_mesh_with_face_ids(mesh, face_list):
+# mesh 点云化
+def mesh_2_points(mesh, subdense, min_point_Num=1):
+    '''
+    mesh点云化
+    mesh 输入的o3d格式mesh
+    subdense 采样密度（mesh面积上每subdense间隔采一个点）
+    min_point_Num 最少采样点数量
+    '''
+    area = mesh.get_surface_area()
+    number_points = int(area / (subdense * subdense)) #+ min_point_Num  # 至少一个点
+    number_points = min_point_Num if number_points < min_point_Num else number_points
+    # 点云化
+    pcd = mesh.sample_points_uniformly(number_of_points=number_points)
+    return pcd
+
+
+# mesh 裁剪
+def crop_mesh_with_face_ids(mesh, face_list, bool_visualize=False):
     """
     通过面片索引列表，拆分obj文件，
     mesh  # 带纹理的o3d格式mesh  = o3d.io.read_triangle_mesh(input_obj_path, True)
@@ -18,8 +35,14 @@ def crop_mesh_with_face_ids(mesh, face_list):
 
         # 1 裁剪
         # 1.0 构造新旧映射-顶点
+        # o3d.visualization.draw_geometries([mesh])
         triangles = np.asarray(mesh.triangles)
         new_triangles_old_id = triangles[face_list]   # 老的面片id
+
+        if True: #测试：只看裁剪位置是否正确
+            mesh.triangles = o3d.utility.Vector3iVector(new_triangles_old_id)
+            o3d.visualization.draw_geometries([mesh])
+
         unique_vertex_indices = np.unique(new_triangles_old_id)  # 分割后mesh用到的顶点-旧编号
         vertex_index_mapping = {old_index: new_index for new_index, old_index in enumerate(unique_vertex_indices)}  # 顶点的新旧序号映射
         # 1.1 segmesh面片顶点-新索引 new_triangles
@@ -40,12 +63,14 @@ def crop_mesh_with_face_ids(mesh, face_list):
         new_mesh = o3d.geometry.TriangleMesh()
         new_mesh.vertices = o3d.utility.Vector3dVector(new_vertices)
         new_mesh.triangles = o3d.utility.Vector3iVector(new_triangles)
+        # 纹理需要以下3个信息
         new_mesh.triangle_uvs = o3d.utility.Vector2dVector(new_uvs)
         new_mesh.textures = mesh.textures
         new_mesh.triangle_material_ids = o3d.utility.IntVector(new_uv_ids)
 
         # 可视化
-        # o3d.visualization.draw_geometries([new_mesh])
+        if bool_visualize:
+            o3d.visualization.draw_geometries([new_mesh])
 
         return new_mesh
 
@@ -59,10 +84,34 @@ if __name__ == '__main__':
 
     # 1 测试读入输入数据裁剪并点云化
     if True:
-        # 2 obj-seg
-        input_obj_path = r'E:\LabelScripts\testdata\wraptest\out\wraptest\wraptest.obj'
+        # 1 obj
+        input_obj_path = r'H:\commonFunc_3D\testdata\1_label\obj\Tile_+1317_+1459\Tile_+1317_+1459.obj'
         mesh = o3d.io.read_triangle_mesh(input_obj_path, True)
-        face_list = [0,1,2,3]
-        mesh_seg = crop_mesh_with_face_ids(mesh, face_list)
-
-
+        # 2 label
+        def read_dict_to_binary(filename):
+            '''
+            解析pth格式的字典，
+            注意：
+                1）wrp中标签下标从1开始，此处-1，跟面片下标对齐。
+                2）默认每个标签的面片先排序。
+            '''
+            import pickle
+            data = dict()
+            try:
+                with open(filename, 'rb') as f:
+                    data = pickle.load(f)
+                print("success read")
+            except Exception as e:
+                print("wrong read!")
+            # 排序，优化
+            for key, val in data.items():  # wigwam
+                val.sort()
+                val = (np.array(val) - 1).tolist()  # 编号从1开始
+                data[key] = val
+            return data
+        pth_fileP = r'H:\commonFunc_3D\testdata\1_label\pth\Tile_+1317_+1459.pth'
+        class_labels = read_dict_to_binary(pth_fileP)
+        for key,face_list in class_labels.items():
+            # face_list = [0,1,2,3]
+            mesh_seg = crop_mesh_with_face_ids(mesh, face_list, True)
+            tes = 1
