@@ -1,0 +1,18 @@
+使用说明：
+
+【AISegZMQV】version2025.04.21
+功能：图片生成json文件；当前版本输出每个窗户置信度。
+步骤：
+1、先开启命令行，运行 AISegZMQ.exe tcp://127.0.0.1:5555 0
+2、执行script.py，记得修改地址，及是否开启推理
+
+【layout_reasoning】
+功能：根据json文件，推理窗户位置，并返回推理后json
+
+
+【数据位置】
+标签数据：
+H:\TestData\layoutReasoning\0org_images\识别率测试数据-图片+json
+
+测试数据：
+H:\TestData\layoutReasoning
