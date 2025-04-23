@@ -39,7 +39,7 @@ def crop_mesh_with_face_ids(mesh, face_list, bool_visualize=False):
         triangles = np.asarray(mesh.triangles)
         new_triangles_old_id = triangles[face_list]   # 老的面片id
 
-        if True: #测试：只看裁剪位置是否正确
+        if False: # 测试：只看裁剪位置是否正确
             mesh.triangles = o3d.utility.Vector3iVector(new_triangles_old_id)
             o3d.visualization.draw_geometries([mesh])
 
@@ -85,7 +85,7 @@ if __name__ == '__main__':
     # 1 测试读入输入数据裁剪并点云化
     if True:
         # 1 obj
-        input_obj_path = r'H:\commonFunc_3D\testdata\1_label\obj\Tile_+1317_+1459\Tile_+1317_+1459.obj'
+        input_obj_path = r'E:\LabelScripts\testdata\wraptest\27DATA19\obj\seg15\seg15.obj'
         mesh = o3d.io.read_triangle_mesh(input_obj_path, True)
         # 2 label
         def read_dict_to_binary(filename):
@@ -109,9 +109,12 @@ if __name__ == '__main__':
                 val = (np.array(val) - 1).tolist()  # 编号从1开始
                 data[key] = val
             return data
-        pth_fileP = r'H:\commonFunc_3D\testdata\1_label\pth\Tile_+1317_+1459.pth'
+        pth_fileP = r'E:\LabelScripts\testdata\wraptest\27DATA19\pth\seg15.pth'
         class_labels = read_dict_to_binary(pth_fileP)
         for key,face_list in class_labels.items():
             # face_list = [0,1,2,3]
+            if len(face_list) == 0:
+                continue
+            print(f"标签: {key}，数量：{len(face_list)}, 最大值：{max(face_list)}，最小值：{min(face_list)}")
             mesh_seg = crop_mesh_with_face_ids(mesh, face_list, True)
             tes = 1
