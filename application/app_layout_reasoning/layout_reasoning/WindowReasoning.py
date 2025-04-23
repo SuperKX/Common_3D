@@ -68,7 +68,9 @@ def initLayout(inputJson, inputImagesFolder, tempPath='', testMode=False):
             for rect in layoutInput['door']:
                 rect = list(map(int, rect))
                 cv2.rectangle(img, (rect[0], rect[1]), (rect[2], rect[3]), (250, 0, 0), 6)
-            cv2.imwrite(os.path.join(tempPath, layoutInput["name"] + '_0Recog.jpg'), img)
+            # cv2.imwrite(os.path.join(tempPath, layoutInput["name"] + '_0Recog.jpg'), img)
+            cv2.imencode('.jpg', img)[1].tofile(os.path.join(tempPath, layoutInput["name"] + '_0Recog.jpg'))
+
         layoutInputAll.append(layoutInput)  # 无效？
     return layoutInputAll
 
@@ -908,7 +910,8 @@ def addWindow2(layoutInputAll,tempPath='',testMode=False):
         # 测试
         if testMode:
             path, name = wall['path'], wall['name']
-            img = cv2.imread(path)
+            img = cv2.imdecode(np.fromfile(path, dtype=np.uint8), cv2.IMREAD_COLOR)
+            # img = cv2.imread(path)
             pic_h, pic_w, _ = img.shape
 
             # if name !='5yYSFSckVlhc_13':
@@ -1001,9 +1004,10 @@ def addWindow2(layoutInputAll,tempPath='',testMode=False):
                 cv2.waitKey(0)  # 等待按键按下
                 cv2.destroyAllWindows()  # 关闭所有窗口
             if True:  # writeBool=True
-                cv2.imwrite(os.path.join(tempPath, name + '_temp.jpg'), img)
+                # cv2.imwrite(os.path.join(tempPath, name + '_temp.jpg'), img)
+                cv2.imencode('.jpg', img)[1].tofile(os.path.join(tempPath, name + '_temp.jpg'))
 
-        # 7 返回需要剔除的窗户-原始下标
+                # 7 返回需要剔除的窗户-原始下标
         # 1）
         winIdx_dels = list(winIdx_dels)
         idx_ORG_del = idx_ORG[winIdx_dels]  # 删除的窗户(原始窗户顺序)

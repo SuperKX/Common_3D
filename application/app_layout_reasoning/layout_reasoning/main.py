@@ -17,12 +17,12 @@ if __name__ == '__main__':
 
     # 108pic
     # 图片所在文件夹
-    inputImagesFolder = r'H:\TestData\layoutReasoning\0org_images\识别率测试数据108'
+    inputImagesFolder = r'H:\TestData\layoutReasoning\0images\识别率测试数据-图片+json'
     # json文件地址
-    inputJsonPath = r'H:\TestData\layoutReasoning\1json\result108_noreason.json'  #
+    inputJsonPath = r'H:\TestData\layoutReasoning\1json\label_noreason.json'  #
     # 临时文件夹(不写出可不给)
     tempFolder = r'H:\TestData\layoutReasoning\v0421\temp'
-    outputJsonPath = r'H:\TestData\layoutReasoning\v0421\result108_reason_out.json'
+    outputJsonPath = r'H:\TestData\layoutReasoning\v0421\label_noreason_out.json'
 
 
     # 解析json
