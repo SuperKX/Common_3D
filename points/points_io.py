@@ -12,7 +12,7 @@
 import os
 import plyfile
 import numpy as np
-import pypcd
+from pypcd import pypcd  # 修改回报错
 
 # 可能表示标签的字段
 label_fields = ['class', 'scalar_class', 'label', 'scalar_label', 'labels', 'scalar_labels']

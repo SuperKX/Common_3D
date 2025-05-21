@@ -84,11 +84,20 @@ def folder_eval(folder1, folder2, classNum=2):
         1）默认两个文件夹中比较的文件同名！
         2）在folder2 中找 folder1中同名文件
         3) 当前不支持多层文件夹，需要的话重新开发一个功能：【multifolder_eval】
+        4）标签若每对齐，记得修改！！（如车辆标注标签3，推理标签1：abels1 = labels1 / 3 ）
     '''
     # 1 返回文件夹列表
     formats = ['.ply', '.pcd']
     file_list1 = pth_process.get_files_by_format(folder1, formats)
     file_list2 = pth_process.get_files_by_format(folder2, formats)
+    if not os.path.exists(folder1):
+        raise ValueError(f'地址找不到文件夹：{folder1}')
+    if not os.path.exists(folder2):
+        raise ValueError(f'地址找不到文件夹：{folder2}')
+    if len(file_list1) == 0:
+        raise ValueError(f'地址找不到目标格式的文件：{folder1}')
+    if len(file_list2) == 0:
+        raise ValueError(f'地址找不到目标格式的文件：{folder2}')
     # 2 计算IOU
     scoreMatrix = np.zeros((classNum, classNum), dtype='int')  # 记录精度评价二维矩阵[4][4] ,【真值标签】【推理标签】
     for name_ext2 in file_list2:
