@@ -1,17 +1,19 @@
 '''
     点云的公共功能
+    ndarray_2_pypcd_points  ndarray转pypcd
 '''
 import numpy as np
-import pypcd
+from pypcd import pypcd
 
 
+# ndarray转pypcd
 def ndarray_2_pypcd_points(points, **kwargs):
     '''
-    将多个ndarray，转换成pypcd格式点云
+    将多个ndarray，转换成pypcd格式点云[接受多个变量读入]
     :param points: 输入点坐标 ndarray (shape: (N, 3))
     :param kwargs: 额外的特征，以关键字参数的形式传入。
-                   例如： colors=colors, normals=normals
-                   每个特征都应该是一个 ndarray，且shape为(N, M)，M是特征的维度。
+                   例如： "colors=colors, normals=normals"
+                   每个特征都应该是一个 ndarray，且shape为(N, M)，M是特征的维度。(接受(N,)并改为(N,1))
     :return: pcd 返回 pcd 格式标签点云
     注意：
         1）暂时未验证颜色、法向等多维度数据！！
@@ -35,15 +37,19 @@ def ndarray_2_pypcd_points(points, **kwargs):
         if feature.shape[0] != num_points:
             raise ValueError(f"Feature '{name}' 数量不对.")
 
+        # 维度修改
+        if feature.ndim == 1:
+            feature = feature.reshape(-1, 1)  # 将 (n,) 转换为 (n, 1)
+
         # 将特征添加到数据列表中
         cloud_data.append(feature)
 
         # 更新元数据信息
         num_components = feature.shape[1] if feature.ndim > 1 else 1 # 特征维数 #第二维度
         fields.append(name)
-        sizes.append(4 * np.ones(num_components,dtype=np.float32))  # 假设是 float32
+        sizes.append(4 * num_components)  # 假设是 float32
         types.append('F'*num_components)
-        counts.append(np.ones(num_components,dtype=np.float32))
+        counts.append(num_components)
 
     # 将所有数据水平堆叠起来
     cloud = np.hstack(cloud_data)

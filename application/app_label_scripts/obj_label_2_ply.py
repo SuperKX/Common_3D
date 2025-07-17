@@ -56,6 +56,36 @@ def load_labels(wrp_file):
 
 
 
+def label_ply(class_labels, mesh):
+    ''''
+    输入mesh 和标签字典，写出打标签的点云
+    class_labels 标签字典
+    mesh 输入的网格
+    '''
+    global min_point_Num
+    global subdense
+    # 优化：并行处理！！
+    merged_cloud = np.empty((0, 7))
+    for key, face_list in class_labels.items():  # wigwam
+        if len(face_list) == 0:
+            continue
+        if key not in classlist:
+            print(f"【注意】：该标签 {key} 未统计！")
+        # 4 面片裁剪
+        mesh_seg = mesh_fuc.crop_mesh_with_face_ids(mesh, face_list)
+        # 5 点云化
+        pcd_seg = mesh_fuc.mesh_2_points(mesh_seg, subdense, min_point_Num)
+        if len(pcd_seg.colors) <= 0:
+            print(f"没有颜色，查看是否有贴图！")
+        # 6 构造np格式点云
+        coord_seg = np.hstack((np.array(pcd_seg.points), np.array(pcd_seg.colors) * 255))
+        lablei = label_list[classlist.index(key)]
+        points_seg_np = np.hstack((coord_seg, np.full((coord_seg.shape[0], 1), lablei)))  # x,y,z, r,g,b, label
+        # 7 分块点云合并
+        merged_cloud = np.vstack((merged_cloud, points_seg_np))  # shape(N,7)
+    return merged_cloud
+
+
 
 if __name__ == '__main__':
 
@@ -70,63 +100,31 @@ if __name__ == '__main__':
     inputPath_pth = path_env + r"\pth"
     outputPath = path_env + r"\ply"
     # 3）采样参数
+    global min_point_Num
     min_point_Num = 1  # 分块保证的最小采样点数量
+    global subdense
     subdense = 0.1  # gridsample密度
 
-    # 主函数
+    # 合法性判断
     if not os.path.exists(inputPath_obj) or not os.path.exists(inputPath_pth):
         raise FileNotFoundError("找不到输入路径！")
     if not os.path.exists(outputPath):
         os.makedirs(outputPath)
+    # 逐个文件处理（优化：可并行）
     for pth_file in os.listdir(inputPath_pth):
         # 1 处理地址
         filename, ext = os.path.splitext(pth_file)
         if ext != '.pth':
             continue
-        obj_file = os.path.join(inputPath_obj,filename,filename+'.obj')  # 读入的obj文件
+        obj_file = os.path.join(inputPath_obj, filename, filename+'.obj')  # 读入的obj文件
         pth_fileP = os.path.join(inputPath_pth,pth_file)  # 读入的标签文件
         # 点云写出地址
-        cloud_file = os.path.join(outputPath,filename+'.ply' )
-
+        cloud_file = os.path.join(outputPath, filename+'.ply')
         # 2 解析 标签.pth
         class_labels = read_dict_to_binary(pth_fileP)
         # 3 解析 mesh
         mesh = o3d.io.read_triangle_mesh(obj_file, True)
-        # 优化：并行处理！！
-        merged_cloud = np.empty((0,7))
-        for key, face_list in class_labels.items():  # wigwam
-            if key not in classlist:
-                print(f"【注意】：该标签 {key} 未统计！")
-            # 4 面片裁剪
-            mesh_seg = mesh_fuc.crop_mesh_with_face_ids(mesh, face_list)
-            # 5 点云化
-            pcd_seg = mesh_fuc.mesh_2_points(mesh_seg, subdense, min_point_Num)
-            if len(pcd_seg.colors) <= 0:
-                print(f"没有颜色，查看是否有贴图！")
-            # 6 构造np格式点云
-            coord_seg = np.hstack((np.array(pcd_seg.points), np.array(pcd_seg.colors) * 255))
-            lablei = label_list[classlist.index(key)]
-            points_seg_np = np.hstack((coord_seg, np.full((coord_seg.shape[0],1),lablei)))  # x,y,z, r,g,b, label
-            # 7 分块点云合并
-            merged_cloud = np.vstack((merged_cloud,points_seg_np))  # shape(N,7)
+        # 4 转点云
+        merged_cloud = label_ply(class_labels, mesh)
         # 8 写出点云
         pts_io.write_ply_file(cloud_file, merged_cloud)
-
-
-
-    #
-    #
-    # # 1 标签解析
-    # wrp_file = r'E:\LabelScripts\testdata\wraptest\out\wraptest.txt'
-    # class_labels = load_labels(wrp_file)
-    # face_list = class_labels['wigwam']
-    # face_list = (np.array(face_list) - 1).tolist()  # 编号从1开始
-    #
-    # # 2 obj-seg
-    # input_obj_path = r'E:\LabelScripts\testdata\wraptest\out\wraptest\wraptest.obj'
-    # mesh = o3d.io.read_triangle_mesh(input_obj_path, True)
-    #
-    #
-    # mesh_seg = mesh_fuc.crop_mesh_with_face_ids(mesh, face_list)
-    # # outpath = r'H:\commonFunc_3D\testdata\seg16_2.obj'
-    # # # o3d.io.wrie_triangle_mesh(mesh,)
