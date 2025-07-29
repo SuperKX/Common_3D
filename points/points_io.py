@@ -12,7 +12,7 @@
 import os
 import plyfile
 import numpy as np
-from pypcd import pypcd  # 修改回报错
+from pypcd import pypcd  # 修改会报错
 
 # 可能表示标签的字段
 label_fields = ['class', 'scalar_class', 'label', 'scalar_label', 'labels', 'scalar_labels']
@@ -153,3 +153,57 @@ end_header
 
     except Exception as e:
         print(f"保存文件时出现错误: {e}")
+
+
+import numpy as np
+import struct
+
+def write_ply_file_binary(file_path, cloud_ndarray):
+    '''
+    将带有坐标、颜色和标签的点云数据写入二进制PLY文件
+    参数:
+        file_path: 输出文件路径
+        cloud_ndarray: numpy数组，格式为[x, y, z, r, g, b, class]
+    注意:
+        1) 读入数据目前写死！[x, y, z, r, g, b, class]
+        2) 类别目前unchar存储（0-255），更多类别需要修改存储类型
+    '''
+    try:
+        num_points = cloud_ndarray.shape[0]
+
+        # 定义PLY文件头
+        header = f"""ply
+format binary_little_endian 1.0
+element vertex {num_points}
+property float x
+property float y
+property float z
+property uchar red
+property uchar green
+property uchar blue
+property uchar class
+end_header
+"""
+        # 写入文件头
+        with open(file_path, 'wb') as f:
+            f.write(header.encode('ascii'))
+
+            # 写入二进制数据
+            for i in range(num_points):
+                data = struct.pack(
+                    'fffBBBB',  # 格式说明符
+                    np.float32(cloud_ndarray[i, 0]),  # x (float32)
+                    np.float32(cloud_ndarray[i, 1]),  # y (float32)
+                    np.float32(cloud_ndarray[i, 2]),  # z (float32)
+                    np.uint8(cloud_ndarray[i, 3]),  # r (uint8)
+                    np.uint8(cloud_ndarray[i, 4]),  # g (uint8)
+                    np.uint8(cloud_ndarray[i, 5]),  # b (uint8)
+                    np.uint8(cloud_ndarray[i, 6])  # class (uint8)
+                )
+                f.write(data)
+
+        print(f"二进制PLY文件已成功保存到 {file_path}")
+
+    except Exception as e:
+        print(f"保存文件时出现错误: {e}")
+        raise

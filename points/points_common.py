@@ -73,3 +73,17 @@ def ndarray_2_pypcd_points(points, **kwargs):
     pcd = pypcd.PointCloud(metadata, cloud)
     return pcd
 
+def gridsample_np_points(data, voxel_size=0.1):
+    '''
+        点云gridsample
+        data            ndarray(n,properties)  # 点云，前三维为坐标
+        sampled_data    ndarray(n_sub,properties)  # 点云，前三维为坐标
+    '''
+
+    coords = data[:,:3]
+    # 计算voxel索引并进行采样
+    voxel_indices = (coords // voxel_size).astype(int)
+    _, unique_indices = np.unique(voxel_indices, axis=0, return_index=True)
+    sampled_data = data[unique_indices]  # 采样后点云
+    return sampled_data
+
