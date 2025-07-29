@@ -158,6 +158,8 @@ end_header
 import numpy as np
 import struct
 
+
+# 弃用：for处理太慢，使用write_ply_file_binary_batch批量处理替换
 def write_ply_file_binary(file_path, cloud_ndarray):
     '''
     将带有坐标、颜色和标签的点云数据写入二进制PLY文件
@@ -203,6 +205,62 @@ end_header
                 f.write(data)
 
         print(f"二进制PLY文件已成功保存到 {file_path}")
+
+    except Exception as e:
+        print(f"保存文件时出现错误: {e}")
+        raise
+
+def write_ply_file_binary_batch(file_path, cloud_ndarray,
+                                chunk_size: int = 1000000):
+    '''
+    将带有坐标、颜色和标签的点云数据写入二进制PLY文件
+    参数:
+        file_path: 输出文件路径
+        cloud_ndarray: numpy数组，格式为[x, y, z, r, g, b, class]
+        chunk_size: 分块写入的点数（根据内存调整）
+    注意:
+        1) 读入数据目前写死！[x, y, z, r, g, b, class]
+        2) 类别目前unchar存储（0-255），更多类别需要修改存储类型
+    '''
+    try:
+        num_points = cloud_ndarray.shape[0]
+
+        # 1 定义PLY文件头
+        header = f"""ply
+format binary_little_endian 1.0
+element vertex {num_points}
+property float x
+property float y
+property float z
+property uchar red
+property uchar green
+property uchar blue
+property uchar class
+end_header
+"""
+        # 2 定义数据：转换为结构化数组
+        dtype = np.dtype([
+            ('x', '<f4'), ('y', '<f4'), ('z', '<f4'),
+            ('r', 'u1'), ('g', 'u1'), ('b', 'u1'), ('cls', 'u1')
+        ])
+        structured_data = np.empty(num_points, dtype=dtype)
+        structured_data['x'] = cloud_ndarray[:, 0].astype('f4')
+        structured_data['y'] = cloud_ndarray[:, 1].astype('f4')
+        structured_data['z'] = cloud_ndarray[:, 2].astype('f4')
+        structured_data['r'] = cloud_ndarray[:, 3].astype('u1')
+        structured_data['g'] = cloud_ndarray[:, 4].astype('u1')
+        structured_data['b'] = cloud_ndarray[:, 5].astype('u1')
+        structured_data['cls'] = cloud_ndarray[:, 6].astype('u1')
+
+        # 3 分块写入（避免内存爆炸）
+        with open(file_path, 'wb') as f:
+            # 1) 写入文件头
+            f.write(header.encode('ascii'))
+            # 2) 分块处理
+            for i in range(0, num_points, chunk_size):
+                chunk = structured_data[i:i + chunk_size]
+                f.write(chunk.tobytes())  # 直接写入二进制块
+        print(f"已写入 {num_points:,} 点 | 文件大小: {os.path.getsize(file_path) / 1024 / 1024:.2f} MB")
 
     except Exception as e:
         print(f"保存文件时出现错误: {e}")

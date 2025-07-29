@@ -21,6 +21,7 @@ import points.points_io as pts_io
 import points.points_common as points_common
 import mesh.mesh_common as mesh_fuc
 import time
+import parallel.parallel as parallel
 import plyfile
 
 
@@ -280,58 +281,6 @@ end_header
     except Exception as e:
         print(f"保存文件时出现错误: {e}")
 
-import struct
-def write_ply_file_binary(file_path, cloud_ndarray):
-    '''
-    将带有坐标、颜色和标签的点云数据写入二进制PLY文件
-
-    参数:
-        file_path: 输出文件路径
-        cloud_ndarray: numpy数组，格式为[x, y, z, r, g, b, class]
-
-    注意:
-        1) 数组格式固定为: 坐标(float32)、颜色(uint8)、标签(int32)
-        2) 使用二进制格式存储，比ASCII更节省空间
-    '''
-    try:
-        num_points = cloud_ndarray.shape[0]
-
-        # 定义PLY文件头
-        header = f"""ply
-format binary_little_endian 1.0
-element vertex {num_points}
-property float x
-property float y
-property float z
-property uchar red
-property uchar green
-property uchar blue
-property uchar class
-end_header
-"""
-        # 写入文件头
-        with open(file_path, 'wb') as f:
-            f.write(header.encode('ascii'))
-
-            # 写入二进制数据
-            for i in range(num_points):
-                data = struct.pack(
-                    'fffBBBB',  # 格式说明符
-                    np.float32(cloud_ndarray[i, 0]),  # x (float32)
-                    np.float32(cloud_ndarray[i, 1]),  # y (float32)
-                    np.float32(cloud_ndarray[i, 2]),  # z (float32)
-                    np.uint8(cloud_ndarray[i, 3]),  # r (uint8)
-                    np.uint8(cloud_ndarray[i, 4]),  # g (uint8)
-                    np.uint8(cloud_ndarray[i, 5]),  # b (uint8)
-                    np.uint8(cloud_ndarray[i, 6])  # class (uint8)
-                )
-                f.write(data)
-
-        print(f"二进制PLY文件已成功保存到 {file_path}")
-
-    except Exception as e:
-        print(f"保存文件时出现错误: {e}")
-        raise
 
 def mesh_to_group(filename, pth_fileP, obj_file, dic_old_pth):
     '''
@@ -412,9 +361,10 @@ def groupedobj_to_cloud(filename, obj_file_grouped, subdense, cloud_file, bool_w
         merged_cloud = np.vstack((merged_cloud, points_seg_np))  # shape(N,7)
     print(f"{filename} 3 完成点云化 {(time.time() - start_time):.4f}")
     # 写出点云
-    write_ply_file_binary(cloud_file, merged_cloud)
+    pts_io.write_ply_file_binary_batch(cloud_file, merged_cloud)
     return merged_cloud
 
+# 当前弃用，仅作为备份参考，使用whole_process_parallel替代。2025.07.29
 def whole_process(path_env, generate_labeled_obj=True, generate_all_clouds=True, generate_merged_cloud=True):
     '''
     全流程处理
@@ -461,80 +411,109 @@ def whole_process(path_env, generate_labeled_obj=True, generate_all_clouds=True,
             dic_old_pth = os.path.join(inputPath_obj, filename, filename + '_old_face_dict.pth')
             mesh_to_group(filename, pth_fileP, obj_file, dic_old_pth)
 
-        # if False:
-        #     print(f"{filename} 2 obj打标签开始")
-        #     # 解析 标签.pth
-        #     class_labels = read_dict_to_binary(pth_fileP)
-        #     # 解析 标签对应的面片序列.pth
-        #     # 老序列
-        #     dic_old_pth = os.path.join(inputPath_obj, filename, filename + '_old_face_dict.pth')
-        #     face_list_old = read_mesh_verts_idxs(dic_old_pth)
-        #     print(f"{filename} 2.1 完成 old序列 pth解析 {(time.time() - start_time):.4f}")
-        #     start_time = time.time()
-        #     # 2）标签新序列
-        #     face_list_new, material_to_faces, mtl_file_line_num = read_obj_minimal(obj_file)  # 所有面索引
-        #     face_list_new = np.array(face_list_new)
-        #     print(f"{filename} 2.2 完成 new序列 解析 {(time.time() - start_time):.4f}")
-        #     start_time = time.time()
-        #     # 建立新旧面片顺序的映射
-        #     # (有点慢)
-        #     new_old_idx = create_index_array(face_list_old, face_list_new)  # 索引,记录旧的映射到新的
-        #     print(f"{filename} 2.3 完成 新旧面索引映射 {(time.time() - start_time):.4f}")
-        #     start_time = time.time()
-        #     # 更新标签列表
-        #     labels_new = dict()
-        #     for key, face_list in class_labels.items():  # wigwam
-        #         labels_new[key] = new_old_idx[face_list]
-        #     # 3) 更新打标签后的obj文件
-        #     label_obj(labels_new, classlist, material_to_faces, obj_file, mtl_file_line_num)  # 写出到 xxx_group.obj
-        #     print(f"{filename} 2 完成obj打标签 {(time.time() - start_time):.4f}")
-        #     start_time = time.time()
-
         # 3 点云分割
-        # 1) mesh拆分
         if generate_all_clouds:
             obj_file_grouped = os.path.splitext(obj_file)[0] + "_group" + os.path.splitext(obj_file)[1]
             merged_cloud = groupedobj_to_cloud(filename, obj_file_grouped, subdense, cloud_file, bool_write_ply=True)
-            # # 3 obj文件分割
-            # print(f"{filename} 3 开始mesh点云化处理")
-            # start_time = time.time()
-            # # TODO 待优化！！！！！！！！！！！！！！
-            # obj_file = os.path.splitext(obj_file)[0] + "_group" + os.path.splitext(obj_file)[1]
-            # meshes = mesh_fuc.crop_mesh_by_group(obj_file)
-            # print(f"{filename} 3.1 完成mesh分块 {(time.time() - start_time):.4f}")
-            # start_time = time.time()
-            # # 4 mesh点云化
-            # merged_cloud = np.empty((0, 7))
-            # for name, mesh in meshes.items():
-            #     cloud_seg = mesh_fuc.mesh_2_points(mesh, subdense, min_point_Num=1)
-            #     if len(cloud_seg.colors) <= 0:
-            #         print(f"没有颜色，查看是否有贴图！")
-            #     # 1） 构造np格式点云(打标签单独封装功能)
-            #     coord_seg = np.hstack((np.array(cloud_seg.points), np.array(cloud_seg.colors) * 255))
-            #     lablei = label_list[classlist.index(name)]
-            #     points_seg_np = np.hstack((coord_seg, np.full((coord_seg.shape[0], 1), lablei)))  # x,y,z, r,g,b, label
-            #     # 5 分块点云合并
-            #     merged_cloud = np.vstack((merged_cloud, points_seg_np))  # shape(N,7)
-            # print(f"{filename} 3 完成点云化 {(time.time() - start_time):.4f}")
-            # # 写出点云
-            # write_ply_file_binary(cloud_file, merged_cloud)
 
-        # 6 点云采样
+        # 4 点云采样
         if generate_merged_cloud and generate_all_clouds:  # 全局处理点云合并的时候，需要点云化过程，为了节省io时间。
             start_time = time.time()
             cloud = points_common.gridsample_np_points(merged_cloud, voxel_size=0.1)
             all_clouds.append(cloud)
             print(f"{filename} 4 完成点云采样 {(time.time() - start_time):.4f}")
 
-    # 7 点云合并及写出
+    # 4 点云合并及写出
     if generate_merged_cloud and generate_all_clouds:
+        start_time = time.time()
         merged_points = np.vstack(all_clouds)
         # 点云写出
         # import pts_io
         output_file = os.path.join(path_env, filename + '_sub0.1.ply')
-        pts_io.write_ply_file_binary(output_file, merged_points)
-        print(f"{filename} 5 完成点云合并及写出 {(time.time() - time_start):.4f}")
+        pts_io.write_ply_file_binary_batch(output_file, merged_points)
+        print(f"5 完成点云合并及写出 {(time.time() - start_time):.4f}")
+    print(f"总耗时： {(time.time() - time_start):.4f}")
 
+def whole_process_parallel(path_env, generate_labeled_obj=True, generate_all_clouds=True, generate_merged_cloud=True):
+    '''
+    全流程处理
+        path_env    输入场景的地址
+        generate_labeled_obj    生成grouped的obj文件
+        generate_all_clouds     obj分块点云化
+        generate_merged_cloud   点云降采样及合并
+    '''
+    time_start = time.time()
+    log_str=''
+    # 设置参数
+    min_point_Num = 1  # 分块保证的最小采样点数量
+    subdense = 0.1  # gridsample密度
+
+    # 0 构造传入参数
+    inputPath_obj = path_env + r"\obj"
+    inputPath_pth = path_env + r"\pth"
+    outputPath = path_env + r"\ply"
+    if not os.path.exists(inputPath_obj) or not os.path.exists(inputPath_pth):
+        raise FileNotFoundError("找不到输入路径！")
+    if not os.path.exists(outputPath):
+        os.makedirs(outputPath)
+    paras = {'filename':[],
+             'obj_file':[],
+             'pth_fileP': [],
+             'cloud_file': [],
+             'dic_old_pth': [],
+             'obj_file_grouped': []
+             }
+    for pth_file in os.listdir(inputPath_pth):
+        # 处理地址
+        filename, ext = os.path.splitext(pth_file)
+        if ext != '.pth':
+            continue
+        obj_file = os.path.join(inputPath_obj, filename, filename + '.obj')  # 读入的obj文件
+        pth_fileP = os.path.join(inputPath_pth, pth_file)  # 读入的标签文件
+        cloud_file = os.path.join(outputPath, filename + '.ply')        # 点云写出地址
+        dic_old_pth = os.path.join(inputPath_obj, filename, filename + '_old_face_dict.pth')  # 老标签地址
+        obj_file_grouped = os.path.splitext(obj_file)[0] + "_group" + os.path.splitext(obj_file)[1]
+        # 构建
+        paras['filename'].append(filename)
+        paras['obj_file'].append(obj_file)
+        paras['pth_fileP'].append(pth_fileP)
+        paras['cloud_file'].append(cloud_file)
+        paras['dic_old_pth'].append(dic_old_pth)
+        paras['obj_file_grouped'].append(obj_file_grouped)
+
+    # parallel执行功能
+    # 1 生成grouped - obj文件
+    if generate_labeled_obj:
+        start_time = time.time()
+        args = [(paras['filename'][item], paras['pth_fileP'][item],paras['obj_file'][item],paras['dic_old_pth'][item])
+                for item in range(len(paras['filename']))]
+        parallel.parallel_process(mesh_to_group, args)
+        log_str += f" 1 生成grouped - obj文件： {(time.time() - start_time):.4f}\n"
+
+    # 2 mesh点云化
+    if generate_all_clouds:
+        start_time = time.time()
+        args = [(paras['filename'][item], paras['obj_file_grouped'][item], subdense, paras['cloud_file'][item], True)
+                for item in range(len(paras['filename']))]
+        merged_clouds = parallel.parallel_process(groupedobj_to_cloud, args)
+        log_str += f"2 mesh点云化： {(time.time() - start_time):.4f}\n"
+
+    # 3 点云采样
+    if generate_merged_cloud and generate_all_clouds:  # 全局处理点云合并的时候，需要点云化过程，为了节省io时间
+        start_time = time.time()
+        voxel_size = 0.1
+        args = [(merged_clouds[item], voxel_size) for item in range(len(paras['filename']))]
+        subsample_clouds = parallel.parallel_process(points_common.gridsample_np_points, args)
+        log_str += f"3 点云采样： {(time.time() - start_time):.4f}\n"
+
+        # 4 点云合并及写出
+        start_time = time.time()
+        scene_cloud = np.vstack(subsample_clouds)
+        output_file = os.path.join(path_env, filename + '_sub0.1.ply')
+        pts_io.write_ply_file_binary_batch(output_file, scene_cloud)
+        log_str += f" 4 点云合并及写出： {(time.time() - start_time):.4f}\n"
+    log_str += f" 总耗时： {(time.time() - time_start):.4f}\n"
+    print(log_str)
 
 def get_all_files(folder_path):
     all_files = []
@@ -543,8 +522,6 @@ def get_all_files(folder_path):
             file_path = os.path.join(root, file)
             all_files.append(file_path)
     return all_files
-
-import concurrent.futures
 
 def cloud_read_sample(file):
     # 1 读入
@@ -569,13 +546,13 @@ if __name__ == '__main__':
 # 功能执行区----------------------------------------------
     # 0 全流程处理
     if False:
-        path_env = r"J:\DATASET\BIMTwins\WRP\out\batch1\33ZJ_out"
+        path_env = r"J:\DATASET\BIMTwins\WRP\out\batch1\34PTY1_out"
         # TODO 改成多线程并行
         whole_process(path_env, generate_labeled_obj=True, generate_all_clouds=True, generate_merged_cloud=True)
 
     # 1 mesh按照标签group处理
     # 1.1 单个文件处理
-    if True:
+    if False:
         filename = r'Tile_+001_+002'
         folder_path = r'J:\DATASET\BIMTwins\WRP\out\batch1\34PTY1_out'
         pth_fileP = os.path.join(folder_path,'pth', filename+'.pth')
@@ -588,7 +565,7 @@ if __name__ == '__main__':
 
     # 2 grouped_mesh点云化
     # 2.1 单个文件处理
-    if True:
+    if False:
         subdense = 0.1
         filename = r'Tile_+001_+002'
         folder_path = r'J:\DATASET\BIMTwins\WRP\out\batch1\34PTY1_out'
@@ -601,45 +578,42 @@ if __name__ == '__main__':
         time_start = time.time()
         obj_folder = r'J:\DATASET\BIMTwins\WRP\out\batch1\34PTY1_out\obj'
         all_files = [d for d in os.listdir(obj_folder)]
-        # TODO 改成多线程并行
-        for filename in all_files:
-            subdense = 0.1
-            obj_file = os.path.join(obj_folder, filename, filename + '.obj')
-            cloud_file = os.path.join(os.path.split(obj_folder)[0],'ply', filename + '.ply')  # output
-            obj_file_grouped = os.path.splitext(obj_file)[0] + "_group" + os.path.splitext(obj_file)[1]
-            merged_cloud = groupedobj_to_cloud(filename, obj_file_grouped, subdense, cloud_file, bool_write_ply=True)
-        print(f"2 mesh批量点云化 耗时 {(time.time() - time0):.4f}")  # 耗时 68
+        if True:  # 并行  177.1s -》 120.8s
+            args = []
+            for filename in all_files:
+                subdense = 0.1
+                obj_file = os.path.join(obj_folder, filename, filename + '.obj')
+                cloud_file = os.path.join(os.path.split(obj_folder)[0], 'ply', filename + '.ply')  # output
+                obj_file_grouped = os.path.splitext(obj_file)[0] + "_group" + os.path.splitext(obj_file)[1]
+                args.append((filename, obj_file_grouped, subdense, cloud_file, True))
+            parallel.parallel_process(groupedobj_to_cloud, args)
+        else:  # 177.1s
+            for filename in all_files:
+                subdense = 0.1
+                obj_file = os.path.join(obj_folder, filename, filename + '.obj')
+                cloud_file = os.path.join(os.path.split(obj_folder)[0], 'ply', filename + '.ply')  # output
+                obj_file_grouped = os.path.splitext(obj_file)[0] + "_group" + os.path.splitext(obj_file)[1]
+                merged_cloud = groupedobj_to_cloud(filename, obj_file_grouped, subdense, cloud_file,
+                                                   bool_write_ply=True)
+
+        print(f"2 mesh批量点云化 耗时 {(time.time() - time_start):.4f}")  # 耗时 68
+
 
     # 3 点云采样及合并
     if True:
         import threading
-        folder_path = r'J:\DATASET\BIMTwins\WRP\out\batch1\34PTY1_out'
-        output_file = os.path.join(folder_path, 'mergesub0.1.ply')
+        folder_path = r'J:\DATASET\BIMTwins\WRP\out\batch1\31QL_out'
+        output_file = os.path.join(folder_path, 'mergesub0.13.ply')
         folder_ply = os.path.join(folder_path, 'ply')
         all_files = get_all_files(folder_ply)
         print(f"处理的分块数量: {len(all_files)}")
         # 点云采样
         all_clouds = []
         time0 = time.time()
-        if True:  # 并行方法
-            # print(f"初始线程数: {threading.active_count()}")
-            input_list = all_files
-            # 使用 ThreadPoolExecutor 创建线程池
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                # print(f"线程池创建后线程数: {threading.active_count()}")  # 应该增加
-                # 提交所有任务到线程池
-                future_to_item = {executor.submit(cloud_read_sample, item): item for item in input_list}
-                # print(f"任务提交后线程数: {threading.active_count()}")  # 应该为1(主)+3(工作线程)
-                # 获取完成的任务结果
-                for future in concurrent.futures.as_completed(future_to_item):
-                    try:
-                        result = future.result()
-                        all_clouds.append(result)
-                        print(f"完成处理点云{future_to_item[future]}")
-                    except Exception as e:
-                        item = future_to_item[future]
-                        print(f"处理项目 {item} 时出错: {e}")
-            # print(f"所有任务完成后线程数: {threading.active_count()}")  # 应该恢复为1
+
+        if True:  # 并行方法 102s->60s
+            input_list = [(item,) for item in all_files]
+            all_clouds = parallel.parallel_process(cloud_read_sample,input_list)
         else:  # 无并行，暂不用
             for file in all_files:
                 # 1 读入
@@ -656,7 +630,13 @@ if __name__ == '__main__':
         # 3 合并
         merged_points = np.vstack(all_clouds)
         # 点云写出
+        time0 = time.time()
         pts_io.write_ply_file_binary(output_file, merged_points)
+        print(f"耗时 {(time.time() - time0):.4f}")  # 耗时 68
+        # 点云写出
+        time0 = time.time()
+        pts_io.write_ply_file_binary_batch(output_file, merged_points)
+        print(f"耗时 {(time.time() - time0):.4f}")  # 耗时 68
 
 
 
