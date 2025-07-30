@@ -206,6 +206,49 @@ def crop_mesh_with_face_ids(mesh, face_list, bool_visualize=False):
         print(f"裁剪和保存网格时发生错误：{e}")
         return False
 
+def read_obj_minimal(filename):
+    """
+    obj文件解析，按照文件顺序，返回面片列表、纹理对应的面片字典,mtl 出现的行号
+    Args:
+        filename (str): Path to the OBJ file.
+    Returns:
+        face_list_new (list): 新的标签列表。ex：[[v1,v2,v3],[...],...]
+        material_to_faces (dict): 纹理贴图到到新面片序列的列表，{‘mtl1':[f1,f2,f3,...],...}
+        mtl_file_line_num: 记录mtl文件出现的行号
+    """
+    face_list_new = []
+    material_to_faces = {}
+    current_material = None
+    mtl_file_line_num = -1
+
+    with open(filename, "r") as f:
+        for line_number, line in enumerate(f):  # Capture line number
+            line = line.strip()
+
+            if line.startswith("usemtl "):
+                # Use material
+                current_material = line[7:]
+                if current_material not in material_to_faces:
+                    material_to_faces[current_material] = {} # Change to nested dict
+            elif line.startswith("f "):
+                # Face indices
+                face_data = line[2:].split()
+                face = []
+                for vertex_data in face_data:
+                    # Extract only the vertex index (first component)
+                    vertex_index = int(vertex_data.split("/")[0]) - 1
+                    face.append(vertex_index)
+
+                face_list_new_index = len(face_list_new) # Get index BEFORE appending
+
+                face_list_new.append(face)  # Add to the new list
+
+                # Add face index in face_list_new and line content to the current material's list
+                if current_material:
+                    material_to_faces[current_material][face_list_new_index] = line # Store face_list_new_index and line content
+            elif line.startswith("mtllib "):
+                mtl_file_line_num =line_number
+    return face_list_new, material_to_faces,mtl_file_line_num
 
 
 if __name__ == '__main__':
