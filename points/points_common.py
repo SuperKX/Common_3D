@@ -4,13 +4,16 @@
 '''
 import numpy as np
 from pypcd import pypcd
+from scipy.spatial import ConvexHull
+from matplotlib.path import Path
+from scipy.spatial import cKDTree
 
 
 # ndarray转pypcd
 def ndarray_2_pypcd_points(points, **kwargs):
     '''
     将多个ndarray，转换成pypcd格式点云[接受多个变量读入]
-    :param points: 输入点坐标 ndarray (shape: (N, 3))
+    :param points: 输入点坐标, ndarray(N, 3)
     :param kwargs: 额外的特征，以关键字参数的形式传入。
                    例如： "colors=colors, normals=normals"
                    每个特征都应该是一个 ndarray，且shape为(N, M)，M是特征的维度。(接受(N,)并改为(N,1))
@@ -73,3 +76,39 @@ def ndarray_2_pypcd_points(points, **kwargs):
     pcd = pypcd.PointCloud(metadata, cloud)
     return pcd
 
+
+# 计算三维点的二维凸包
+def convex_hull_from_3dcloud(coords_np):
+    '''
+    输入3d点云坐标，写出在投影面上的凸包（1个）
+    coords_np   ndarray(n,3)
+    '''
+    if coords_np.shape[0] < 3:
+        raise ValueError(f'凸包计算错误：点云数量过少')
+    hull = ConvexHull(coords_np[:, :2])
+    hull_path = Path(coords_np[hull.vertices][:, :2])  # 转轮廓线
+    # 写出轮廓
+    if False:
+        file_path = r'/home/xuek/桌面/PTV3_Versions/ptv3_raser_cpu/ptv3_deploy/scripts/output/test_temp/guangzhou_20240605140342__xx.poly'
+        with open(file_path, "w", encoding="utf-8") as file:
+            for vertex in hull_path.vertices:
+                file.write(f"{vertex[0]:.6f} {vertex[1]:.6f} 0\n")
+            file.write(f"\n")
+    # 显示轮廓
+    if False:
+        import matplotlib.pyplot as plt
+        # 创建 PathPatch 对象
+        from matplotlib.patches import PathPatch
+        points = grid_cloud[:, :2]
+        patch = PathPatch(hull_path, facecolor='none', edgecolor='red', lw=2)
+        # 创建图形和轴
+        fig, ax = plt.subplots()
+        # 绘制点云
+        ax.scatter(points[:, 0], points[:, 1], label='Points')
+        # 添加 PathPatch 到轴
+        ax.add_patch(patch)
+        # 设置图例
+        ax.legend()
+        # 显示图形
+        plt.show()
+    return hull_path
