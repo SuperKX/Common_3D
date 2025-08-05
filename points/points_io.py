@@ -18,6 +18,37 @@ from pypcd import pypcd  # 修改会报错
 label_fields = ['class', 'scalar_class', 'label', 'scalar_label', 'labels', 'scalar_labels']
 
 
+def np2pcd(points,labels):
+    '''
+    写出带标签的点
+        :param points:输入点坐标ndarray
+        :param labels:输入标签ndarray
+        :param
+        :return:pcd 返回pcd格式标签点云
+        '''
+    num_points = labels.size
+    # 1 点云
+    if labels.ndim < 2:
+        labels = labels[:, np.newaxis]
+    cloud = np.hstack((points, labels))
+    cloud = cloud.astype(np.float32)
+    # 2 写出
+    metadata = {
+        'version': '0.7',
+        'fields': ['x', 'y', 'z', 'label'],
+        'size': [4, 4, 4, 4],  # 数据类型大小 (float32)
+        'type': ['F', 'F', 'F', 'F'],  # 数据类型 (float)
+        'count': [1, 1, 1, 1],  # 每个字段的计数
+        'width': num_points,
+        'height': 1,
+        'viewpoint': [0, 0, 0, 1, 0, 0, 0],
+        'points': num_points,
+        'data': 'binary'  # 'ascii'  # 数据存储格式 (ascii 或 binary_compressed)
+    }
+    pcd = pypcd.PointCloud(metadata, cloud)
+    return pcd
+
+
 # ply解析
 def parse_ply_file(file_path):
     """

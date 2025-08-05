@@ -3,12 +3,20 @@ import numpy as np
 import open3d as o3d
 from pypcd import pypcd
 from scipy.spatial import cKDTree
-import points_search
-import points_common
+import sys
+import os
+# sys.path.append(os.path.join(os.path.dirname(__file__),'../points'))
+# path = os.path.join(os.path.dirname(__file__),'../points')
+# print(path)
+
+
+from points import points_search, points_common, points_io
+# from points import points_common
+
 
 
 # 点云拟合地面点
-def min_neighbor_height(input_cloud, search_radius = 2,thresh=0.2):
+def min_neighbor_height(input_cloud, search_radius=2,thresh=0.2):
     '''
     修改输入点云高程，将其高度接搜索半径范围（2D平面）内的最低点。业务上用来点云模拟地面点。
     说明：
@@ -59,7 +67,6 @@ def min_neighbor_height(input_cloud, search_radius = 2,thresh=0.2):
     return
 
 
-
 def creat_grid(point_cloud, pix_size):
     '''
     创建每个点的栅格索引.
@@ -76,6 +83,7 @@ def creat_grid(point_cloud, pix_size):
     grid_coords = np.floor((point_cloud[:, :2] - min_coord) / pix_size).astype(int)
 
     return grid_coords, min_coord, cell_size
+
 
 def add_terrain(points, car_bool, pix_size):
     '''
@@ -96,6 +104,8 @@ def add_terrain(points, car_bool, pix_size):
     pcd_car.points = o3d.utility.Vector3dVector(car_coord)
     # 0.2 创建背景点
     back_coord = points[back_id]  # 背景点
+    if len(back_coord) == 0:
+        return add_clouds
     pcd_back = o3d.geometry.PointCloud()
     # 2d点建立kdtree(防止近邻点不符合期待)
     back_coord_2d = back_coord.copy()
@@ -106,7 +116,7 @@ def add_terrain(points, car_bool, pix_size):
     # 1 聚类
     eps = 1  # 同一聚类中最大点间距
     min_points = 20  # 有效聚类的最小点数
-    labels = np.array(pcd_car.cluster_dbscan(eps, min_points, print_progress=True))
+    labels = np.array(pcd_car.cluster_dbscan(eps, min_points, print_progress=False))  # clustering进度条
     max_label = labels.max()  # 获取聚类标签的最大值 [-1,0,1,2,...,max_label]，label = -1 为噪声，因此总聚类个数为 max_label + 1
     for i in range(0, max_label + 1):  # 逐个聚类处理
         # 当前车
@@ -193,6 +203,8 @@ def add_terrain(points, car_bool, pix_size):
         # 3.1 更新背景点范围（xoy）
         idx_find = points_search.refresh_neighbor(grid_back_points, grid_need, search_radius=1)
         back_new = [grid_back_points[i] for i in idx_find]
+        if len(back_new) == 0:
+            continue
         if False:  # 写出最近背景点
             output_path = r'/home/xuek/桌面/TestData/input/车辆补点20250529/test/5-1背景点筛选/51背景xy' + str(i) + '.pcd'
             labels_temp = np.array([0]*len(back_new))
@@ -234,8 +246,245 @@ def add_terrain(points, car_bool, pix_size):
             pcd_output.save_pcd(output_path, compression='binary')  # 保存为 ASCII 格式
             continue
         add_clouds = np.vstack((add_clouds, add_cloud))
+    print(f"补充点数量:{len(add_clouds)}")
     return add_clouds #, add_labels
 
+def refresh_neighbor(points_neighbors, points_tosearch, search_radius=1):
+    '''
+    在点云points_neighbors中查找点云points_tosearch附近的点（二维平面距离最近）
+    return 筛选后的点
+    '''
+    back_new_2d = np.array(points_neighbors.copy())  # 筛选车辆周边点，剔除多余背景点（降低对高程干扰）
+    back_new_2d[:, 2] = 0
+    back_new_pcd = o3d.geometry.PointCloud()
+    back_new_pcd.points = o3d.utility.Vector3dVector(back_new_2d)
+    back_new_kd = o3d.geometry.KDTreeFlann(back_new_pcd)
+    # search_radius = 1  # 最近的1m范围内的点
+    around_point_idx = []  # 记录需要的点索引
+    for point in points_tosearch:
+        point_2d = point.copy()  # 注意是深拷贝！！！
+        point_2d[2] = 0
+        [k, idx, distances] = back_new_kd.search_radius_vector_3d(point_2d, search_radius)
+        around_point_idx.extend(idx)
+    idx_find = sorted(list(set(around_point_idx)))
+    points_out = [points_neighbors[i] for i in idx_find]
+    return points_out
+
+
+def add_terrain2(points, car_bool, pix_size):
+    '''
+    points 分割后坐标点云 N*3
+    car_id 车辆标签
+    pix_size 栅格尺寸
+    '''
+    # 测试模式，正式运行的时候关闭
+    is_test_mode = False
+    if is_test_mode:
+        test_path = f'/home/xuek/桌面/TestData/input/staticmap_test/20250801补点和识别问题/yangjian1'
+
+
+    add_clouds = np.empty((0, 3))
+    # add_labels = np.empty((0, 1))
+    # 0 建立映射
+    car_id = np.where(car_bool)[0]  # 索引
+    back_id = np.where(~car_bool)[0]  # 索引
+    # car_idx_map = {oldidx:newidx for newidx,oldidx in enumerate(car_id)}  # 新旧车辆点
+    # 0.1 创建车点云
+    car_coord = points[car_id]  # 车辆点
+    # print(f"车点云数量{len(car_coord)}")
+    if len(car_coord)==0:
+        return add_clouds
+    pcd_car = o3d.geometry.PointCloud()
+    pcd_car.points = o3d.utility.Vector3dVector(car_coord)
+    # 0.2 创建背景点
+    back_coord = points[back_id]  # 背景点
+    pcd_back = o3d.geometry.PointCloud()
+    # 2d点建立kdtree(防止近邻点不符合期待)
+    back_coord_2d = back_coord.copy()
+    back_coord_2d[:, 2] = 0
+    pcd_back.points = o3d.utility.Vector3dVector(back_coord_2d)
+    pcd_tree = o3d.geometry.KDTreeFlann(pcd_back)
+
+    # 1 聚类
+    eps = 1  # 同一聚类中最大点间距
+    min_points = 20  # 有效聚类的最小点数
+    labels = np.array(pcd_car.cluster_dbscan(eps, min_points, print_progress=False))
+    max_label = labels.max()  # 获取聚类标签的最大值 [-1,0,1,2,...,max_label]，label = -1 为噪声，因此总聚类个数为 max_label + 1
+    for i in range(0, max_label + 1):  # 逐个聚类处理
+        # 当前车
+        car_i_idx = np.where(labels == i)[0]  # cari索引-新索引
+        car_i_coord = car_coord[car_i_idx]  # cari 坐标
+
+       # 2 近邻点搜索（2D）
+        search_num = 20
+        around_point_idx = []
+        for query_point in car_i_coord:
+            [k, idx, distances] = pcd_tree.search_knn_vector_3d(query_point, search_num)
+            around_point_idx.extend(idx)
+        # 获取裁剪的背景点
+        around_point_idx = list(set(around_point_idx))  # 去除重复索引
+        if len(around_point_idx) ==0:
+            continue
+        back_cloud_seg = back_coord[around_point_idx]  # 裁剪的背景点坐标
+        if is_test_mode:  # 写出最近背景点
+            path_temp = test_path + r'/1背景'
+            if not os.path.exists(path_temp):
+                os.makedirs(path_temp)
+            output_path = path_temp + r'/1背景' + str(i) + '.pcd'
+            labels_temp = np.array([0]*len(around_point_idx))
+            pcd_output = points_io.np2pcd(back_cloud_seg, labels_temp)
+            pcd_output.save_pcd(output_path, compression='binary')  # 保存为 ASCII 格式
+            # continue
+
+        # 2 栅格化
+        # 2.1 合并车辆、周围背景点
+        grid_cloud = np.vstack((car_i_coord, back_cloud_seg))
+        # 2.2 grid构造
+        grid_id_np, min_coord, cell_size = creat_grid(grid_cloud, pix_size)  # 拿车辆点和外部点构造网格
+        # 2.3 计算补点范围xoy：所有车辆点栅格，去除存在更低背景点的栅格
+        # 1）计算背景点占用栅格
+        grid_id_np_back = np.floor((back_cloud_seg[:, :2] - min_coord) / pix_size).astype(int)  # 背景点在grid中2d坐标 [[2 13], [4 5]]
+        grid_set_exist_back = set(tuple(row) for row in grid_id_np_back)  # 所有背景点grid 去重复
+        grid_back_points = []  # 背景栅格点（最低高程）
+        back_dict = dict()  # 记录grid坐标对应的高程
+        for pair in grid_set_exist_back:
+            a = np.where(np.all(grid_id_np_back == np.array(pair), axis=1))[0]  # 所有在pair的grid中的点序号
+            b = back_cloud_seg[a]  # 格子中点坐标
+            h_min = min(b[:,2])  # grid中最小点高程
+            back_dict[pair] = h_min
+            grid_3d = np.array([(pair[0]+0.5) * pix_size[0] + min_coord[0], (pair[1]+0.5)* pix_size[1] + min_coord[1], h_min])  # 构造grid点坐标
+            grid_back_points.append(grid_3d)
+        if is_test_mode:  # 写出最近背景点
+            path_temp = test_path + r'/2背景_grid'
+            if not os.path.exists(path_temp):
+                os.makedirs(path_temp)
+            output_path = path_temp + r'/2背景_grid' + str(i) + '.pcd'
+            labels_temp = np.array([0]*len(grid_back_points))
+            pcd_output = points_io.np2pcd(grid_back_points, labels_temp)
+            pcd_output.save_pcd(output_path, compression='binary')  # 保存为 ASCII 格式
+            # continue
+        # 2）计算车辆grid点（同背景）
+        grid_id_np_car = np.floor((car_i_coord[:, :2] - min_coord) / pix_size).astype(int)  # 背景点在grid中2d坐标 [[2 13], [4 5]]
+        grid_set_exist_car = set(tuple(row) for row in grid_id_np_car)  # 所有背景点grid 去重复
+        grid_car_points = []
+        car_dict = dict()
+        for pair in grid_set_exist_car:
+            a = np.where(np.all(grid_id_np_car == np.array(pair), axis=1))[0]  # 所有在pair的grid中的点序号
+            b = car_i_coord[a]  # 格子中点坐标
+            h_min = min(b[:, 2])  # grid中最小点高程
+            car_dict[pair] = h_min
+            grid_3d = np.array([(pair[0]+0.5) * pix_size[0] + min_coord[0], (pair[1]+0.5) * pix_size[1] + min_coord[1], h_min])  # 构造grid点坐标
+            grid_car_points.append(grid_3d)
+        if is_test_mode:  # 写出车辆栅格点
+            path_temp = test_path + r'/3车辆_grid'
+            if not os.path.exists(path_temp):
+                os.makedirs(path_temp)
+            output_path = path_temp + r'/3车辆_grid' + str(i) + '.pcd'
+            # output_path = r'/home/xuek/桌面/TestData/input/车辆补点20250529/test/3-栅格-car/栅格—car' + str(i) + '.pcd'
+            labels_temp = np.array([0] * len(grid_car_points))
+            pcd_output = points_io.np2pcd(grid_car_points, labels_temp)
+            pcd_output.save_pcd(output_path, compression='binary')  # 保存为 ASCII 格式
+            # continue
+        # 3）写出需要补充点的栅格
+        grid_need = []  # 需要写出的grid
+        for pair in grid_set_exist_car:
+            if pair in grid_set_exist_back and back_dict[pair]<car_dict[pair]:
+                continue
+            grid_need.append(np.array([(pair[0]+0.5) * pix_size[0] + min_coord[0], (pair[1]+0.5) * pix_size[1] + min_coord[1], car_dict[pair]]) )
+        # 优化1：过少点直接不计算
+        if len(grid_need)<30: # 面积0.2*0.2*num
+            continue
+        if is_test_mode:  # 写出需要补全点
+            path_temp = test_path + r'/4grid_需要补充'
+            if not os.path.exists(path_temp):
+                os.makedirs(path_temp)
+            output_path = path_temp + r'/4grid_需要补充' + str(i) + '.pcd'
+            # output_path = r'/home/xuek/桌面/TestData/input/车辆补点20250529/test/4-栅格-补充/栅格—need' + str(i) + '.pcd'
+            labels_temp = np.array([0] * len(grid_need))
+            pcd_output = points_io.np2pcd(grid_need, labels_temp)
+            pcd_output.save_pcd(output_path, compression='binary')  # 保存为 ASCII 格式
+            # continue
+        # 3 参考点优化
+        # 参考点：补充点参考的点，来自于周边环境点
+        # 3.1 更新背景点范围（xoy）
+        back_new = refresh_neighbor(grid_back_points, grid_need, search_radius=1)
+        if len(back_new) == 0:
+            continue
+        if is_test_mode:  # 写出最近背景点
+            path_temp = test_path + r'/51参考点_背景'
+            if not os.path.exists(path_temp):
+                os.makedirs(path_temp)
+            output_path = path_temp + r'/51参考点_背景' + str(i) + '.pcd'
+            # output_path = r'/home/xuek/桌面/TestData/input/车辆补点20250529/test/5-1背景点筛选/51背景xy' + str(i) + '.pcd'
+            labels_temp = np.array([0]*len(back_new))
+            pcd_output = points_io.np2pcd(back_new, labels_temp)
+            pcd_output.save_pcd(output_path, compression='binary')  # 保存为 ASCII 格式
+            # continue
+        # 3.2  ransac拟合平面，剔除噪声数据
+        outcloud,_ = points_common.get_plane_inliers(np.array(back_new), threshold=0.2, max_iterations=100, min_inliers=3)
+        back_new = outcloud.tolist()
+        if is_test_mode:  # 写出拟合平面点
+            test_path = f'/home/xuek/桌面/TestData/input/staticmap_test/20250801补点和识别问题/yangjian1'
+            path_temp = test_path + r'/52_ransac剔除问题参考点高程'
+            if not os.path.exists(path_temp):
+                os.makedirs(path_temp)
+            output_path = path_temp + r'/52_ransac' + str(i) + '.pcd'
+            # output_path = r'/home/xuek/桌面/TestData/input/车辆补点20250529/test/5-1背景点筛选/51背景xy' + str(i) + '.pcd'
+            labels_temp = np.array([0]*outcloud.shape[0])
+            pcd_output = points_io.np2pcd(outcloud, labels_temp)
+            pcd_output.save_pcd(output_path, compression='binary')  # 保存为 ASCII 格式
+            # continue
+
+        # 3.3 更新背景点高程（高度z）
+        min_neighbor_height(back_new, search_radius=2, thresh=0.2)
+        if is_test_mode:  # 更新背景点高程
+            path_temp = test_path + r'/53参考点_背景_高度更新'
+            if not os.path.exists(path_temp):
+                os.makedirs(path_temp)
+            output_path = path_temp + r'/53参考点_背景_高度更新' + str(i) + '.pcd'
+            # output_path = r'/home/xuek/桌面/TestData/input/车辆补点20250529/test/5-2背景点高程_2/52背景z' + str(i) + '.pcd'
+            labels_temp = np.array([0]*len(back_new))
+            pcd_output = points_io.np2pcd(back_new, labels_temp)
+            pcd_output.save_pcd(output_path, compression='binary')  # 保存为 ASCII 格式
+            # continue
+        # 4 更新补充点
+        # 4.1 计算补充点高程（来自最近邻居点）
+        grid_need_np = np.array(grid_need)
+        # grid_back_points_np = np.array(grid_back_points)
+        inference_points = np.array(back_new)
+        if grid_need_np.size < 5:
+            continue
+        idxss = points_search.find_nearest_ref_points(inference_points[:,:2], grid_need_np[:,:2])
+        height = inference_points[idxss][:,2]  # 取出高程值
+        add_cloud = np.hstack((grid_need_np[:,:2],height[:,np.newaxis]))
+        if is_test_mode:  # 写出需要补全点
+            path_temp = test_path + r'/61补充点'
+            if not os.path.exists(path_temp):
+                os.makedirs(path_temp)
+            output_path = path_temp + r'/61补充点' + str(i) + '.pcd'
+            # output_path = r'/home/xuek/桌面/TestData/input/车辆补点20250529/test/6-1补充点/61补充点' + str(i) + '.pcd'
+            labels_temp = np.array([0] * len(add_cloud))
+            pcd_output = points_io.np2pcd(add_cloud, labels_temp)
+            pcd_output.save_pcd(output_path, compression='binary')  # 保存为 ASCII 格式
+            # continue
+        # 4.2 优化：平滑处理
+        # 开启平滑优化
+        if True:
+            radius = 1  # 平滑范围
+            add_cloud = points_search.moving_average_smoothing(add_cloud, radius)
+        if is_test_mode:  # 补全点平滑
+            path_temp = test_path + r'/62补充点-平滑'
+            if not os.path.exists(path_temp):
+                os.makedirs(path_temp)
+            output_path = path_temp + r'/62补充点-平滑' + str(i) + '.pcd'
+            # output_path = r'/home/xuek/桌面/TestData/input/车辆补点20250529/test/6-2补充点-平滑/62补充点-平滑' + str(i) + '.pcd'
+            labels_temp = np.array([0] * len(add_cloud))
+            pcd_output = points_io.np2pcd(add_cloud, labels_temp)
+            pcd_output.save_pcd(output_path, compression='binary')  # 保存为 ASCII 格式
+            # continue
+        add_clouds = np.vstack((add_clouds, add_cloud.copy()))
+    print(f"补充点数量:{len(add_clouds)}")
+    return add_clouds #, add_labels
 
 def add_terrain_func_test(input_file, out_file):
     '''
@@ -273,6 +522,5 @@ if __name__ == "__main__":
     # test测试车辆剔除后补地面
     if True:
         input_cloud = r'/home/xuek/桌面/TestData/input/车辆补点20250529/zhongtian/seged.pcd'
-        out_folder = r'/home/xuek/桌面/TestData/input/车辆补点20250529/zhongtian/seged_0604.pcd'
+        out_folder = r'/home/xuek/桌面/TestData/input/车辆补点20250529/zhongtian/seged_06042.pcd'
         add_terrain_func_test(input_cloud, out_folder)
-

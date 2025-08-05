@@ -126,3 +126,72 @@ def convex_hull_from_3dcloud(coords_np):
         # 显示图形
         plt.show()
     return hull_path
+
+def get_plane_inliers(point_cloud, threshold=0.1, max_iterations=1000, min_inliers=3):
+    """
+    使用RANSAC算法拟合点云中的平面，并返回符合该平面的点（内点）
+    参数:
+        point_cloud: 输入点云，ndarray(n, 3)
+        threshold: 距离阈值，小于此值的点被视为内点
+        max_iterations: 最大迭代次数
+        min_inliers: 最小内点数量，用于判断是否为有效平面
+
+    返回:
+        inlier_points: 符合拟合平面的点，形状为(m, 3)的ndarray
+        plane_params: 拟合的平面参数 [a, b, c, d]，对应平面方程ax + by + cz + d = 0
+    """
+    # 检查输入点云是否有效
+    if not isinstance(point_cloud, np.ndarray) or point_cloud.shape[1] != 3:
+        raise ValueError("输入点云必须是形状为(n, 3)的ndarray")
+
+    n_points = point_cloud.shape[0]
+    if n_points < 3:
+        raise ValueError("点云至少需要3个点才能拟合平面")
+
+    best_inliers = []
+    best_plane = None
+
+    # RANSAC迭代
+    for _ in range(max_iterations):
+        # 随机选择3个点
+        indices = random.sample(range(n_points), 3)
+        p1, p2, p3 = point_cloud[indices]
+
+        # 计算平面方程
+        v1 = p2 - p1
+        v2 = p3 - p1
+        normal = np.cross(v1, v2)
+
+        # 处理共线点的情况（法向量为零向量）
+        if np.allclose(normal, [0, 0, 0]):
+            continue
+
+        a, b, c = normal
+        d = - (a * p1[0] + b * p1[1] + c * p1[2])
+
+        # 计算所有点到平面的距离，确定内点
+        inliers = []
+        for i in range(n_points):
+            x, y, z = point_cloud[i]
+            distance = abs(a * x + b * y + c * z + d) / np.sqrt(a ** 2 + b ** 2 + c ** 2)
+            if distance < threshold:
+                inliers.append(i)
+
+        # 更新最佳平面
+        if len(inliers) > len(best_inliers) and len(inliers) >= min_inliers:
+            best_inliers = inliers
+            best_plane = [a, b, c, d]
+
+    # 如果找到有效平面，使用所有内点优化平面参数
+    if best_plane is not None and len(best_inliers) > 0:
+        # 使用最小二乘法优化
+        inlier_points = point_cloud[best_inliers]
+        X = np.hstack((inlier_points, np.ones((inlier_points.shape[0], 1))))
+        _, _, V = np.linalg.svd(X)
+        best_plane = V[-1, :]
+        norm = np.linalg.norm(best_plane[:3])
+        if norm > 0:
+            best_plane /= norm
+        return inlier_points, best_plane
+    else:
+        raise RuntimeError("无法从点云中拟合出有效的平面")
