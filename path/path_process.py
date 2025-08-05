@@ -1,7 +1,7 @@
 import os
 import shutil
 
-# 在字符串列表中找到包含该字符串的位置
+# 在字符串列表中找到包含该字符串的索引
 def find_str_in_strlist(stri, strlist):
     '''
     在字符串列表中找到包含该字符串位置,不是字符串
@@ -11,6 +11,18 @@ def find_str_in_strlist(stri, strlist):
         if stri in stritem:
             str_ids.append(i)
     return str_ids
+
+def get_all_files(folder_path):
+    '''
+    获取所有文件
+    '''
+    all_files = []
+    for root, dirs, files in os.walk(folder_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            all_files.append(file_path)
+    return all_files
+
 
 def creat_folder_structure():
     '''
@@ -41,7 +53,6 @@ def copy_rename_move(source_file, new_name, destination_folder):
         print("错误: 没有足够的权限执行此操作!")
     except Exception as e:
         print(f"错误: 发生了一个未知错误: {e}")
-
 
 
 def change_filename_in_multifolders(input_folder, output_folder, filename):
@@ -92,6 +103,7 @@ def get_files_by_format(folder_path, formats=None):
         if len(file_list) == 0:
             print(f'文件夹中未找到指定目标!')
     return sorted(file_list)
+
 
 if __name__ == '__main__':
     # change_filename_in_multifolders test
