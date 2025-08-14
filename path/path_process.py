@@ -75,33 +75,64 @@ def change_filename_in_multifolders(input_folder, output_folder, filename):
         copy_rename_move(file_from, filename_to, folder_to)
     return
 
-def get_files_by_format(folder_path, formats=None):
+
+def get_files_by_format(folder_path, formats=None, return_full_path=True):
     """
     获取指定文件夹下特定格式的文件/文件夹列表,并排序
-    1) 不指定formats,则读入所有文件\文件夹; 只读文件,则['.*']??代验证
 
     :param folder_path: 文件夹路径
-    :param formats: 文件格式列表，如 ['.txt', '.jpg'],如果不指定格式,则不传入
-    :return: 符合格式的文件列表
+    :param formats: 文件格式列表，如 ['.txt', '.jpg']
+    :param return_full_path: 是否返回完整路径 (包含文件夹路径)
+    :return: 符合格式的文件/文件夹列表
     """
     file_list = []
     if not os.path.exists(folder_path):
         raise FileNotFoundError(f"错误: 文件夹 {folder_path} 不存在。")
+
+    # 特殊处理: 如果formats为空，表示获取所有文件和文件夹
+    all_files = formats is None
+    # 特殊处理: 如果formats为['.*']，表示只获取所有文件夹
+    dirs_only = formats == ['.*']
+
+    found_items = False
+
+    # 只遍历顶层目录，不递归子目录
     for root, dirs, files in os.walk(folder_path):
-        # 1 所有文件\文件夹
-        if formats == None:
-            file_list.extend(dirs)
-            file_list.extend(files)
-        # 2 所有格式文件
-        elif formats == ['.*']:
-            file_list.extend(dirs)
-        # 3 指定格式文件
+        # 1. 获取所有文件和文件夹
+        if all_files:
+            if return_full_path:
+                file_list.extend(os.path.join(root, item) for item in files)
+                file_list.extend(os.path.join(root, item) for item in dirs)
+            else:
+                file_list.extend(files)
+                file_list.extend(dirs)
+            found_items = True
+            # 只处理一级目录
+            break
+
+        # 2. 只获取所有文件夹
+        elif dirs_only:
+            if return_full_path:
+                file_list.extend(os.path.join(root, d) for d in dirs)
+            else:
+                file_list.extend(dirs)
+            found_items = True
+            # 只处理一级目录
+            break
+
+        # 3. 获取指定格式的文件
         else:
             for file in files:
                 if any(file.lower().endswith(fmt) for fmt in formats):
-                    file_list.append(file)
-        if len(file_list) == 0:
-            print(f'文件夹中未找到指定目标!')
+                    if return_full_path:
+                        file_list.append(os.path.join(root, file))
+                    else:
+                        file_list.append(file)
+                    found_items = True
+
+    if not found_items:
+        print(f'文件夹 {folder_path} 中未找到指定目标!')
+
     return sorted(file_list)
 
 
