@@ -12,6 +12,7 @@ brief：处理用geomagic打完标签后，导出obj点云化等功能。
         3 obj_labeled文件解析
             ① mesh按照group分块、
             ② 点云化处理。
+        4 点云文件批量采样及合并
 '''
 import os
 import open3d as o3d
@@ -21,9 +22,8 @@ import points.points_io as pts_io
 import points.points_common as points_common
 import mesh.mesh_common as mesh_fuc
 import time
-import parallel.parallel as parallel
-import plyfile
-
+import efficient.parallel as parallel
+import efficient.ndarray_calculate as ndarray_calculate
 
 def read_dict_to_binary(filename):
     '''
@@ -64,14 +64,13 @@ def read_mesh_verts_idxs(filename):
 
 def read_obj_minimal(filename):
     """
-    Reads an OBJ file, returns faces, material-to-faces mapping using index from face_list_new.
+    obj文件解析，按照文件顺序，返回面片列表、纹理对应的面片字典,mtl 出现的行号
     Args:
         filename (str): Path to the OBJ file.
     Returns:
-        tuple: (face_list_new, material_to_faces)
-            face_list_new (list): 新的标签列表
-            material_to_faces (dict): 纹理贴图到到新面片序列的列表
-            mtl_file_line_num: 记录mtl文件出现的行号
+        face_list_new (list): 新的标签列表。ex：[[v1,v2,v3],[...],...]
+        material_to_faces (dict): 纹理贴图到到新面片序列的列表，{‘mtl1':[f1,f2,f3,...],...}
+        mtl_file_line_num: 记录mtl文件出现的行号
     """
     face_list_new = []
     material_to_faces = {}
@@ -106,49 +105,6 @@ def read_obj_minimal(filename):
             elif line.startswith("mtllib "):
                 mtl_file_line_num =line_number
     return face_list_new, material_to_faces,mtl_file_line_num
-
-def create_index_array(old_indices, new_indices):
-    """
-    生成一个1D NumPy数组，将旧面索引映射到新面索引。
-    使用排序和二分查找优化大规模数据（如1亿行）的性能。
-    Args:
-        old_indices: ndarray(n, 3), 旧面索引。
-        new_indices: ndarray(n, 3), 新面索引。
-    Returns:
-        np.ndarray: 形状为 (n,) 的1D数组，每个元素是对应旧索引的新索引位置。
-                    无法映射的索引返回 -1。
-                    如果输入不一致，返回 None。
-    """
-    # 验证输入
-    if old_indices.shape != new_indices.shape or old_indices.ndim != 2:
-        return None
-
-    n = old_indices.shape[0]
-
-    # 1. 将每行转换为结构化类型（内存高效）
-    dtype = np.dtype([('x', 'i4'), ('y', 'i4'), ('z', 'i4')])
-    old_struct = old_indices.copy().view(dtype).reshape(n)
-    new_struct = new_indices.copy().view(dtype).reshape(n)
-
-    # 建立新旧映射
-    # 计算新旧结构到标准排序的映射
-    old_to_std = np.argsort(old_struct)  # 旧结构 -> 标准排序的索引
-    inv_idx1 = np.argsort(old_to_std)  # 上面是old_struct排序索引，而inv_idx1是作用在label索引的索引。
-
-    new_to_std = np.argsort(new_struct)  # 新结构 -> 标准排序的索引
-    # array_ordered = old_struct[old_to_std]  # 标准排序
-    # 计算标准排序到新结构的逆向映射（即新结构的argsort的逆）
-    std_to_new = np.argsort(new_to_std)
-    # 组合映射：旧结构 -> 标准 -> 新结构
-    old_to_new = new_to_std[inv_idx1]  # 注意顺序
-
-    # 验证映射的正确性
-    # a= np.array([1,2,3,4,5,6,7])
-    # d= old_to_new[a]
-    # ooo = old_indices[a]
-    # nnn = new_indices[d]
-
-    return old_to_new
 
 
 def create_selected_material_dict(material_to_faces, face_list_selected):
@@ -251,36 +207,6 @@ def label_obj(labels_new, classlist,material_to_faces, obj_file,start_line):
     # replace_file_content(obj_file, start_line + 2, face_str)  # 编号删除
     # raise ValueError("结束！")
 
-def write_ply_file(file_path,cloud_ndarray):
-    '''
-     临时写出，points_io.py中copy
-    '''
-    try:
-        num_points = cloud_ndarray.shape[0]
-        np.savetxt(file_path, cloud_ndarray, fmt='%f %f %f %d %d %d %i')
-        # 定义 PLY 文件头
-        header = f"""ply
-format ascii 1.0
-element vertex {num_points}
-property float x
-property float y
-property float z
-property int red
-property int green
-property int blue
-property int class
-end_header
-"""
-        with open(file_path, 'r+') as f:
-            old = f.read()
-            f.seek(0)
-            f.write(header)
-            f.write(old)
-        print(f"合并后的带标签点云已成功保存到 {file_path}")
-
-    except Exception as e:
-        print(f"保存文件时出现错误: {e}")
-
 
 def mesh_to_group(filename, pth_fileP, obj_file, dic_old_pth):
     '''
@@ -314,7 +240,7 @@ def mesh_to_group(filename, pth_fileP, obj_file, dic_old_pth):
     start_time = time.time()
     # 建立新旧面片顺序的映射
     # (有点慢)
-    new_old_idx = create_index_array(face_list_old, face_list_new)  # 索引,记录旧的映射到新的
+    new_old_idx = ndarray_calculate.create_index_array(face_list_old, face_list_new)  # 索引,记录旧的映射到新的
     print(f"{filename} 2.3 完成 新旧面索引映射 {(time.time() - start_time):.4f}")
     start_time = time.time()
     # 更新标签列表
@@ -545,9 +471,8 @@ if __name__ == '__main__':
 
 # 功能执行区----------------------------------------------
     # 0 全流程处理
-    if False:
-        path_env = r"J:\DATASET\BIMTwins\WRP\out\batch1\34PTY1_out"
-        # TODO 改成多线程并行
+    if True:
+        path_env = r"J:\DATASET\BIMTwins\WRP\out\batch1\36LT_out"
         whole_process(path_env, generate_labeled_obj=True, generate_all_clouds=True, generate_merged_cloud=True)
 
     # 1 mesh按照标签group处理
@@ -600,7 +525,7 @@ if __name__ == '__main__':
 
 
     # 3 点云采样及合并
-    if True:
+    if False:
         import threading
         folder_path = r'J:\DATASET\BIMTwins\WRP\out\batch1\31QL_out'
         output_file = os.path.join(folder_path, 'mergesub0.13.ply')
