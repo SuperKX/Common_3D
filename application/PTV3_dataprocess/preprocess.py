@@ -50,7 +50,6 @@ def val_pth(folder_path):
 
 def cloudinfo_to_ptv3dict(cloud_info,generate_normals=True, sample_grid=0.4):
     '''
-    TODO：优化计算过程，后续替换到common3d
     输入一个点云信息字典，返回PTV3处理的数据字典
     （并进行将采样、计算点法向）
     注意：
