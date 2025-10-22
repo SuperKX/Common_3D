@@ -2,6 +2,8 @@ import os
 import argparse
 import glob
 import json
+import time
+
 import plyfile
 import numpy as np
 import pandas as pd
@@ -45,8 +47,6 @@ def val_pth(folder_path):
             print(f"    标签: {labeli} ,数量: {counti} ,占比: {counti / num:.2%}")
 
     return
-
-
 
 def cloudinfo_to_ptv3dict(cloud_info,generate_normals=True, sample_grid=0.4):
     '''
@@ -112,6 +112,7 @@ def labels_change(labels, label_dict):
     # 1 原始标签信息统计
     unique_orig, counts_orig = np.unique(labels, return_counts=True)
     print(f'原始标签统计：')
+    print(f"点云数量: {labels.size}")
     for u, c in zip(unique_orig, counts_orig):
         print(f'    标签：{u} ，数量：{c} ， 比例：{c / labels.size:.2%}')
 
@@ -156,7 +157,6 @@ def preprocess_BIMTwins(
                                 2）空，表示不修改标签，会提示。
         val_result_pth      是否验证生成的pth文件
         create_fake_label   如果没有标签，则创造假标签
-
     '''
     # 1 获取点云信息：坐标、颜色、标签
     try:
@@ -185,13 +185,15 @@ def preprocess_BIMTwins(
     # 5 将采样、点云化，处理为ptv3输入格式
     # （注意：当前不再构造kdtree上采样树）
     save_dict = cloudinfo_to_ptv3dict(cloud_info, generate_normals=generate_normals, sample_grid=sample_grid)
+    if True:  # train模式需要
+        scene_id = os.path.splitext(os.path.split(input_file)[1])[0]
+        save_dict['scene_id'] = scene_id
     # 写出采样后的点云的 pth文件
     torch.save(save_dict, output_file)
 
     if val_result_pth:
         print(f"验证pth数据标签（降采样结果）：",end="")
         val_pth(output_file)
-        print("\n")
     return
 
 '''
@@ -207,20 +209,28 @@ if __name__ == "__main__":
         # 0 参数修改
         dataset_root = r'/media/xuek/Data210/测试数据/11分类-临时测试：农田草地突出'
         output_root = r'/home/xuek/桌面/TestData/PTV3_data/11分类-临时测试：农田草地突出'
-        # classlist = [0"background", 1"building", 2"wigwam", 3"car", "vegetation", "farmland", "shed", "stockpiles", "bridge", "pole", "others", "grass"]
-        # 6分类数据处理 ["background", "building", "car", "vegetation", "farmland", "grass"]
-        label_dict = {0: [0,7,9,10],
-                      1: [1,2,6,8],
-                      2: [3,],
-                      3: [4,],
-                      4: [5,],
-                      5: [11,],
-        }
         sample_grid = 0.4  # 采样大小：注意此处写死
+
+        # classlist = [0"background", 1"building", 2"wigwam", 3"car", "vegetation", "farmland", "shed", "stockpiles", "bridge", "pole", "others", "grass"]
+        # 1）6分类数据处理 ["background", "building", "car", "vegetation", "farmland", "grass"]
+        label_dict_6class = {0: [0, 7, 9, 10],
+                             1: [1, 2, 6, 8],
+                             2: [3, ],
+                             3: [4, ],
+                             4: [5, ],
+                             5: [11, ]}
+        # 2）4分类["background", "building", "vegetation", "farmland"]
+        label_dict_4class = {0: [0, 7, 9, 10, 3, 11],
+                             1: [1, 2, 6, 8],
+                             2: [4, ],
+                             3: [5, ]}
+
 
         # 1 数据地址
         # 查找所有ply文件
-        sceneList = sorted(glob.glob(dataset_root + "/*/*.ply"))
+        sceneList = sorted(glob.glob(dataset_root + "/train/*.ply"))
+        sceneList += sorted(glob.glob(dataset_root + "/val/*.ply"))
+        sceneList += sorted(glob.glob(dataset_root + "/test/*.ply"))
 
         # 2 创建输出文件地址
         train_output_dir = os.path.join(output_root, "train")
@@ -231,15 +241,20 @@ if __name__ == "__main__":
         os.makedirs(test_output_dir, exist_ok=True)
 
         # 3 批量处理
+        time_start0 = time.time()
         for input_file in sceneList:
-            subFoler = input_file.split('/')[-2]  # 类别文件夹"train"
-            scene_id = input_file.split('/')[-1].split('.')[0]
+            time_starti = time.time()
+            subFoler = os.path.split(os.path.split(input_file)[0])[1]  # 'train'
+            scene_id = os.path.splitext(os.path.split(input_file)[1])[0]  # 'JXY'
             output_file = os.path.join(output_root, subFoler, f"{scene_id}.pth")
             print(f"Processing: {scene_id} in {subFoler}")
             preprocess_BIMTwins(
                 input_file, output_file,
                 generate_normals=True, sample_grid=sample_grid,
-                label_dict=label_dict,
+                label_dict=label_dict_4class,
                 val_result_pth=True,
                 create_fake_label=False,
             )
+            print(f"场景 {scene_id} 耗时：{time.time()-time_starti}")
+            print(" ")
+        print(f"预处理 总耗时：{time.time() - time_start0}")
