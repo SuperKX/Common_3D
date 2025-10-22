@@ -52,6 +52,7 @@ def np2pcd(points,labels):
 # ply解析
 def parse_ply_file(file_path):
     """
+    TODO: 新增参数，是否写出所有ply中参数，还是只写出标签。满足更广泛的应用
     ply文件解析,返回坐标\颜色\标签(ndarray)
     return coords, colors, labels   # ndarray, 无则对应返回None
     """
@@ -77,22 +78,22 @@ def parse_ply_file(file_path):
         else:
             print(f"{file_path}找不到颜色rgb")
         # 3）标签
-        for label_item in label_fields:
-            if label_item in vertex_properties:
-                labels = np.array(vertex_data[label_item]).T
-                labels = np.round(labels).astype(np.int32)
-                break
-            else:
-                print("文件中不包含标签信息。")
-        # if 'class' in vertex_properties or 'scalar_class' in vertex_properties:
-        #     if 'class' in vertex_properties:
-        #         labels = np.array(vertex_data['class']).T
-        #     else:
-        #         labels = np.array(vertex_data['scalar_class']).T
-        #     if not np.issubdtype(labels.dtype, np.integer):
+        label_class = list(set(label_fields)&set(vertex_properties))  # 在label_fields中找同名标签名
+        if len(label_class) == 0:
+            print("【警告】读入的ply文件中不包含标签信息。")
+        else:
+            if len(label_class) >1:
+                print(f"【警告】存在多个标签{label_class}，默认使用第一个标签。")
+            labels = np.array(vertex_data[label_class[0]]).T
+            labels = np.round(labels).astype(np.int32)
+
+        # for label_item in label_fields:
+        #     if label_item in vertex_properties:
+        #         labels = np.array(vertex_data[label_item]).T
         #         labels = np.round(labels).astype(np.int32)
-        # else:
-        #     print(f"【警告】{file_path}找不到标签值class、或scalar_class")
+        #         break
+        #     else:
+        #         print("文件中不包含标签信息。")
     else:
         raise ValueError(f"点云{file_path}找不到数据")
     return coords, colors, labels
@@ -125,12 +126,21 @@ def parse_pcd_file(file_path):
             print("PCD 文件中不包含颜色信息。")
 
         # 提取标签信息
-        for label_item in label_fields:
-            if label_item in pc.fields:
-                labels = pc.pc_data[label_item]
-                break
-            else:
-                print("PCD 文件中不包含标签信息。")
+        # TODO：修改后未验证！！！
+        label_class = list(set(label_fields) & set(pc.fields))  # 在label_fields中找同名标签名
+        if len(label_class) == 0:
+            print("【警告】读入的pcd文件中不包含标签信息。")
+        else:
+            if len(label_class) >1:
+                print(f"【警告】存在多个标签{label_class}，默认使用第一个标签。")
+            labels = pc.pc_data[label_class[0]]
+
+        # for label_item in label_fields:
+        #     if label_item in pc.fields:
+        #         labels = pc.pc_data[label_item]
+        #         break
+        #     else:
+        #         print("PCD 文件中不包含标签信息。")
 
     except FileNotFoundError:
         print(f"错误: 文件 {file_path} 未找到。")
