@@ -13,6 +13,7 @@ import os
 import plyfile
 import numpy as np
 from pypcd import pypcd  # 修改会报错
+import open3d as o3d
 
 # 可能表示标签的字段
 label_fields = ['class', 'scalar_class', 'label', 'scalar_label', 'labels', 'scalar_labels']
@@ -150,6 +151,7 @@ def parse_pcd_file(file_path):
 
 def parse_3d_cloud_file(file_path):
     '''
+    TODO: bug-同名类别只读入第一个。
     统一的解析接口,目前支持点云格式:['pcd', 'ply']
     '''
     _,file_extention = os.path.splitext(file_path)
@@ -159,6 +161,50 @@ def parse_3d_cloud_file(file_path):
         return parse_pcd_file(file_path)
     else:
         raise TypeError(f'输入文件格式 {file_extention} ,未处理')
+
+def parse_cloud_to_dict(file_path):
+    """
+    TODO: 优化：是否增加一个修改标签值数据类型的参数
+    解析点云，将其分解成字典返回 {coords,colors,vertex_class,class_class}
+    """
+    return_dict ={}
+
+    # 判断读入的数据是否为ply文件
+    if file_path.endswith('.ply'):
+        plydata = plyfile.PlyData.read(file_path)
+        for element in plydata.elements:
+            element_name = element.name
+            element_properties = element.properties
+            element_data = element.data
+            properties_name_set = set(prop.name for prop in element_properties)
+
+            # 1 获取点云基本信息
+            if element_name == 'vertex':
+                # 1.1 坐标
+                coords = np.array([element_data['x'], element_data['y'], element_data['z']]).T
+                return_dict['coords'] = coords
+                # 1.2 颜色
+                if 'red' in properties_name_set and 'green' in properties_name_set and 'blue' in properties_name_set:
+                    colors = np.array([element_data['red'], element_data['green'], element_data['blue']]).T
+                    return_dict['colors'] = colors
+                # 1.3 法向
+                if 'nx' in properties_name_set and 'ny' in properties_name_set and 'nz' in properties_name_set:
+                    normals = np.array([element_data['nx'], element_data['ny'], element_data['nz']]).T
+                    return_dict['normals'] = normals
+                # 1.3 剩余属性
+                rest_properties = properties_name_set - set(['x', 'y', 'z', 'red', 'green', 'blue', 'nx', 'ny', 'nz'])
+                for propertyi in rest_properties:
+                    rest_properties_name = element_name+"_"+propertyi
+                    return_dict[rest_properties_name] = element_data[propertyi]
+            else:
+                for propertyi in properties_name_set:
+                    rest_properties_name = element_name + "_" + propertyi
+                    return_dict[rest_properties_name] = element_data[propertyi]
+        return return_dict
+    elif file_path.endswith('.pcd'):
+        raise ValueError(f"点云{file_path}格式不支持, 功能未写，代补充")
+    else:
+        raise ValueError(f"点云{file_path}格式不支持, 功能未写，代补充")
 
 def write_ply_file(file_path,cloud_ndarray):
     '''
@@ -254,7 +300,7 @@ end_header
 def write_ply_file_binary_batch(file_path, cloud_ndarray,
                                 chunk_size: int = 1000000):
     '''
-    将带有坐标、颜色和标签的点云数据写入二进制PLY文件
+    将带有坐标、颜色和标签的点云数据写入二进制PLY文件(分块写入加速)
     参数:
         file_path: 输出文件路径
         cloud_ndarray: numpy数组，格式为[x, y, z, r, g, b, class]
@@ -306,3 +352,9 @@ end_header
     except Exception as e:
         print(f"保存文件时出现错误: {e}")
         raise
+
+if __name__ == '__main__':
+    # 返回所有点云属性
+    if True:
+        file_path = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_weight20251113/val/val_34PTY1.ply'
+        cloud_dict = parse_cloud_to_dict(file_path)
