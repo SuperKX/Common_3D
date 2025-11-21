@@ -243,59 +243,6 @@ end_header
 
 
 import numpy as np
-import struct
-
-
-# 弃用：for处理太慢，使用write_ply_file_binary_batch批量处理替换
-def write_ply_file_binary(file_path, cloud_ndarray):
-    '''
-    将带有坐标、颜色和标签的点云数据写入二进制PLY文件
-    参数:
-        file_path: 输出文件路径
-        cloud_ndarray: numpy数组，格式为[x, y, z, r, g, b, class]
-    注意:
-        1) 读入数据目前写死！[x, y, z, r, g, b, class]
-        2) 类别目前unchar存储（0-255），更多类别需要修改存储类型
-    '''
-    try:
-        num_points = cloud_ndarray.shape[0]
-
-        # 定义PLY文件头
-        header = f"""ply
-format binary_little_endian 1.0
-element vertex {num_points}
-property float x
-property float y
-property float z
-property uchar red
-property uchar green
-property uchar blue
-property uchar class
-end_header
-"""
-        # 写入文件头
-        with open(file_path, 'wb') as f:
-            f.write(header.encode('ascii'))
-
-            # 写入二进制数据
-            for i in range(num_points):
-                data = struct.pack(
-                    'fffBBBB',  # 格式说明符
-                    np.float32(cloud_ndarray[i, 0]),  # x (float32)
-                    np.float32(cloud_ndarray[i, 1]),  # y (float32)
-                    np.float32(cloud_ndarray[i, 2]),  # z (float32)
-                    np.uint8(cloud_ndarray[i, 3]),  # r (uint8)
-                    np.uint8(cloud_ndarray[i, 4]),  # g (uint8)
-                    np.uint8(cloud_ndarray[i, 5]),  # b (uint8)
-                    np.uint8(cloud_ndarray[i, 6])  # class (uint8)
-                )
-                f.write(data)
-
-        print(f"二进制PLY文件已成功保存到 {file_path}")
-
-    except Exception as e:
-        print(f"保存文件时出现错误: {e}")
-        raise
 
 def write_ply_file_binary_batch(file_path, cloud_ndarray,
                                 chunk_size: int = 1000000):
@@ -308,6 +255,7 @@ def write_ply_file_binary_batch(file_path, cloud_ndarray,
     注意:
         1) 读入数据目前写死！[x, y, z, r, g, b, class]
         2) 类别目前unchar存储（0-255），更多类别需要修改存储类型
+        3) 不修改点云顺序！
     '''
     try:
         num_points = cloud_ndarray.shape[0]
@@ -352,6 +300,64 @@ end_header
     except Exception as e:
         print(f"保存文件时出现错误: {e}")
         raise
+
+
+def write_ply_from_dict(file_path, cloud_dict, label_minimize=False):
+    # 1 确定点数
+    num_points = len(cloud_dict.get('coords', cloud_dict.get('colors', cloud_dict.get('normals', []))))
+    if num_points == 0:
+        raise ValueError("无法确定点数量，请提供 coords/colors/normals 之一")
+
+    # 2 构建 element vertex 数据
+    vertex_data = {}
+    dtype_list = []
+    if 'coords' in cloud_dict:
+        c = cloud_dict['coords'].astype('<f4')
+        for i, name in enumerate(['x', 'y', 'z']):
+            vertex_data[name] = c[:, i]
+            dtype_list.append((name, '<f4'))
+    if 'colors' in cloud_dict:
+        rgb = cloud_dict['colors'].astype('u1')
+        for i, name in enumerate(['red', 'green', 'blue']):
+            vertex_data[name] = rgb[:, i]
+            dtype_list.append((name, 'u1'))
+    if 'normals' in cloud_dict:
+        n = cloud_dict['normals'].astype('<f4')
+        for i, name in enumerate(['nx', 'ny', 'nz']):
+            vertex_data[name] = n[:, i]
+            dtype_list.append((name, '<f4'))
+
+    vertex = np.empty(num_points, dtype=dtype_list)
+    for k, v in vertex_data.items():
+        vertex[k] = v
+    elements = [plyfile.PlyElement.describe(vertex, 'vertex')]
+
+    # 3 处理其他字段作为 label（每个字段一个 element）
+    point_keys = {'coords', 'colors', 'normals'}
+    for key, data in cloud_dict.items():
+        if key in point_keys or not isinstance(key, str) or not key.strip():
+            continue
+
+        arr = np.asarray(data).flatten()
+        if len(arr) != num_points:
+            continue  # 跳过长度不匹配的标签
+
+        if label_minimize:
+            arr = np.abs(arr) % 256
+            dtype = 'u1'
+        else:
+            dtype = arr.dtype
+
+        # 创建带字段名的结构化数组（关键！）
+        label_arr = np.empty(len(arr), dtype=[(key, dtype)])
+        label_arr[key] = arr.astype(dtype)
+
+        elements.append(plyfile.PlyElement.describe(label_arr, f'label'))
+
+    plyfile.PlyData(elements, text=False).write(file_path)
+
+
+
 
 if __name__ == '__main__':
     # 返回所有点云属性

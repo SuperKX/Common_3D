@@ -1,7 +1,17 @@
 '''
-    点云标签评估，评价点云标签比例等。
-
+    点云的标签修改，对比，映射等。
+    label_rate          计算标签中各类别比例。
+    file_label_info     计算文件中标签类别比例（支持映射后）
+    label_change        根据字典，修改标签值
+    matrix_eval         计算两个标签的混淆矩阵
+    eval_result         根据评价矩阵，计算准确率、召回率、iou
+    label_eval          输入两个label,写出评价结果，并返回混淆矩阵
+    labels_file_eval    评估1个文件的两组标签
+    labels_file_folder_eval  批量比较两个文件夹下的标签
+    files_eval          评估两个文件，支持的格式参考 data_parse_3d.parse_3d_cloud_file
+    folder_eval         两个文件夹对应文件对比评估，并最后返回所有结果
 '''
+
 import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 import os
@@ -9,6 +19,7 @@ import glob
 import numpy as np
 import open3d as o3d
 import points.points_io as pts_io
+import path.path_process as path_process
 import application.PTV3_dataprocess.label_dict as label_dict
 
 import sys
@@ -34,6 +45,7 @@ def file_label_info(file, label_name,label_dict={}):
         label_name: 标签名称
         label_dict: 标签映射字典，用于标签转换，默认为空字典
     '''
+    print(f'【文件】：{os.path.basename(file)} 标签信息：')
     points_dict = pts_io.parse_cloud_to_dict(file)
     labels = points_dict[label_name]
     if label_dict != {}:  # 映射字典不为空
@@ -326,20 +338,44 @@ def folder_eval_上一版备份(folder1, folder2, classNum=2):
             f'class{classi}: recall {score_rec[classi]:.1%}, precision {score_pre[classi]:.1%}, iou {score_iou[classi]:.1%}')
     print(f'mRecall {score_rec.mean():.1%}, mPrecision {score_pre.mean():.1%}, mIOU {score_iou.mean():.1%}')
 
+def labeled_data_standard(file, file_output, label_change_dict):
+    '''
+        将标注数据标准化：
+            1、标签名修改
+            2、标签名从点云信息中剥离。
+        paras:
+            file: 输入点云文件路径
+            file_output: 输出点云文件路径
+            label_change_dict: 标签字段名称映射字典，格式为 {原标签名: 新标签名}
+    '''
+    points_dict = pts_io.parse_cloud_to_dict(file)
+    for key,new_key in label_change_dict.items():
+        if key in points_dict:
+            points_dict[new_key] = points_dict.pop(key)
+    pts_io.write_ply_from_dict(file_output, points_dict, True)
+
+
 if __name__ == '__main__':
-    if True:  # 查看标签标签比例。
-        file = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_weight20251113/val/val_34PTY1.ply'
-        label_name = "vertex"+"_"+"class"  # element_name + 属性名
-        file_label_info(file, label_name, label_dict=label_dict.label_map_l12v1_to_l05v1)
+    if True:  # 标签标准化
+        file = r'/media/xuek/Data210/数据集/训练集/重建数据_版本2025.10.15/train/06XCNC.ply'
+        file_output = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_weight20251113/06XCNC_临时测试.ply'
+        label_change_dict = {"vertex_class": "label12_V1"}
+        labeled_data_standard(file, file_output, label_change_dict)
+    if False:  # 查看标签标签比例
+        if False:  # 单文件
+            file = r'/media/xuek/Data210/数据集/训练集/重建数据_版本2025.10.15/train/33ZJ.ply'
+            label_name = "vertex" + "_" + "class"  # element_name + 属性名
+            # file_label_info(file, label_name)
+            file_label_info(file, label_name, label_dict=label_dict.label_map_l12v1_to_l05v1)
+        else:  # 文件夹遍历
+            folder = r'/media/xuek/Data210/数据集/训练集/重建数据_版本2025.10.15/val'
+            label_name = "vertex" + "_" + "class"  # element_name + 属性名
+            file_list = pth_process.get_files_by_format(folder, ['.ply', '.pcd'])
+            for name_ext in file_list:
+                file_label_info(os.path.join(folder, name_ext), label_name, label_dict=label_dict.label_map_l12v1_to_l05v1)
 
     if False:  # 对比同文件两个变量
-
         label_dict_input = label_dict.label_map_l12v1_to_l05v1
-        # label_dict_5class = {0: [0, 7, 9, 10],
-        #                      1: [1, 2, 6, 8],
-        #                      2: [3, ],
-        #                      3: [4, 5],
-        #                      4: [11, ]}
         if True:  # 1 单文件
             file = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_weight20251113/val/val_34PTY1.ply'
             labels_file_eval(file, classNum=5,
@@ -352,13 +388,6 @@ if __name__ == '__main__':
                          label_dict1=label_dict_5class, label_dict2={})
     if False:
         # 1）6分类数据处理 ["background", "building", "car", "vegetation", "farmland", "grass"]
-        # label_dict_6class = {0: [0, 7, 9, 10],
-        #                      1: [1, 2, 6, 8],
-        #                      2: [3, ],
-        #                      3: [4, ],
-        #                      4: [5, ],
-        #                      5: [11, ]}
-        import application.PTV3_dataprocess.label_dict as label_dict
         label_dict_input = label_dict.label_map_l12v1_to_l06v1
         file1 = r'/media/xuek/Data210/数据集/训练集/重建数据_版本2025.10.15/val/39PTY2.ply'
         file2 = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_val_weight20251029/val_39PTY2.ply'
