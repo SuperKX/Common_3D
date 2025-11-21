@@ -349,7 +349,7 @@ def labeled_data_standard(file, file_output, label_change_dict):
             label_change_dict: 标签字段名称映射字典，格式为 {原标签名: 新标签名}
     '''
     points_dict = pts_io.parse_cloud_to_dict(file)
-    for key,new_key in label_change_dict.items():
+    for key, new_key in label_change_dict.items():
         if key in points_dict:
             points_dict[new_key] = points_dict.pop(key)
     pts_io.write_ply_from_dict(file_output, points_dict, True)
@@ -357,10 +357,21 @@ def labeled_data_standard(file, file_output, label_change_dict):
 
 if __name__ == '__main__':
     if True:  # 标签标准化
-        file = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_weight20251113/train/train_06XCNC.ply'
-        file_output = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_weight20251113/train_06XCNC_临时测试.ply'
-        label_change_dict = {"vertex_class": "label12_V1", "class_class": "label05_V1_predict"}
-        labeled_data_standard(file, file_output, label_change_dict)
+        if False:  # 单文件
+            file = r'J:\DATASET\BIMTwins\版本2025.10.15/01JXY.ply'
+            file_output = r'J:\DATASET\BIMTwins\标准数据集/01JXY.ply'
+            label_change_dict = {"vertex_class": "label12_V1", "class_class": "label05_V1_predict"}
+            labeled_data_standard(file, file_output, label_change_dict)
+        else:
+            folder = r'J:\DATASET\BIMTwins\版本2025.10.15'
+            folder_output = r'J:\DATASET\BIMTwins\标准数据集'
+            label_change_dict = {"vertex_class": "label12_V1", "vertex_scalar_class": "label12_V1"}
+            file_list = pth_process.get_files_by_format(folder, ['.ply', '.pcd'], return_full_path=False)
+            for name_ext in file_list:
+                print(f"开始处理: {name_ext}")
+                labeled_data_standard(os.path.join(folder, name_ext), os.path.join(folder_output, name_ext), label_change_dict)
+
+
     if False:  # 查看标签标签比例
         if False:  # 单文件
             file = r'/media/xuek/Data210/数据集/训练集/重建数据_版本2025.10.15/train/33ZJ.ply'
@@ -370,7 +381,7 @@ if __name__ == '__main__':
         else:  # 文件夹遍历
             folder = r'/media/xuek/Data210/数据集/训练集/重建数据_版本2025.10.15/val'
             label_name = "vertex" + "_" + "class"  # element_name + 属性名
-            file_list = pth_process.get_files_by_format(folder, ['.ply', '.pcd'])
+            file_list = pth_process.get_files_by_format(folder, ['.ply', '.pcd'], return_full_path=False)
             for name_ext in file_list:
                 file_label_info(os.path.join(folder, name_ext), label_name, label_dict=label_dict.label_map_l12v1_to_l05v1)
 
