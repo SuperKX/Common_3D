@@ -357,9 +357,9 @@ def labeled_data_standard(file, file_output, label_change_dict):
 
 if __name__ == '__main__':
     if True:  # 标签标准化
-        file = r'/media/xuek/Data210/数据集/训练集/重建数据_版本2025.10.15/train/06XCNC.ply'
-        file_output = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_weight20251113/06XCNC_临时测试.ply'
-        label_change_dict = {"vertex_class": "label12_V1"}
+        file = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_weight20251113/train/train_06XCNC.ply'
+        file_output = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_weight20251113/train_06XCNC_临时测试.ply'
+        label_change_dict = {"vertex_class": "label12_V1", "class_class": "label05_V1_predict"}
         labeled_data_standard(file, file_output, label_change_dict)
     if False:  # 查看标签标签比例
         if False:  # 单文件

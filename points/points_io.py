@@ -333,26 +333,29 @@ def write_ply_from_dict(file_path, cloud_dict, label_minimize=False):
     elements = [plyfile.PlyElement.describe(vertex, 'vertex')]
 
     # 3 处理其他字段作为 label（每个字段一个 element）
+    label_data = {}
+    dtype_label = []
     point_keys = {'coords', 'colors', 'normals'}
     for key, data in cloud_dict.items():
         if key in point_keys or not isinstance(key, str) or not key.strip():
             continue
-
         arr = np.asarray(data).flatten()
         if len(arr) != num_points:
+            print(f"标签{key}长度不匹配,跳过不处理")
             continue  # 跳过长度不匹配的标签
-
         if label_minimize:
             arr = np.abs(arr) % 256
             dtype = 'u1'
         else:
             dtype = arr.dtype
 
-        # 创建带字段名的结构化数组（关键！）
-        label_arr = np.empty(len(arr), dtype=[(key, dtype)])
-        label_arr[key] = arr.astype(dtype)
+        label_data[key] = arr
+        dtype_label.append((key, dtype))
 
-        elements.append(plyfile.PlyElement.describe(label_arr, f'label'))
+    label = np.empty(num_points, dtype=dtype_label)
+    for k, v in label_data.items():
+        label[k] = v
+    elements.append(plyfile.PlyElement.describe(label, 'label'))
 
     plyfile.PlyData(elements, text=False).write(file_path)
 
