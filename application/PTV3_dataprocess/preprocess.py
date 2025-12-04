@@ -200,6 +200,16 @@ def preprocess_BIMTwins(
         label_process='label05_V1',
         sample_grid=0.4, val_result_pth=True
 ):
+    '''
+    label_process 调用说明：
+        方法1： label_process = 'label05_V1'
+            直接说明调用的标签版本，前提是数据集均为统一命名方式。
+            找不到则会选择最佳转换方式。
+        方法2： label_process = label_dict.LabelRegistry.label_mappings['label12_V1_to_label05_V1']
+            直接给出映射字典，会调用唯一标签执行映射。
+            存在多标签会报错
+        方法3： label_process = None 不修改标签，直接使用默认标签执行。
+    '''
 
     # 1 获取需要的点云信息
     cloud_info = get_ply_file_info(input_file, info_needed, label_process)
@@ -219,11 +229,35 @@ def preprocess_BIMTwins(
     return
 
 def preprocess_BIMTwins_batch(
+        io_listpair,
+        info_needed=['coords', 'colors', 'labels', 'normals'],
+        label_process='label05_V1',
+        sample_grid=0.4, val_result_pth=True):
+    time_start0 = time.time()
+    for input_file, output_file in io_listpair:
+        time_starti = time.time()
+        subFoler = os.path.split(os.path.split(input_file)[0])[1]  # 'train'
+        scene_id = os.path.splitext(os.path.split(input_file)[1])[0]  # 'JXY'
+        print(f"Processing: {scene_id} in {subFoler}")
+        preprocess_BIMTwins(
+            input_file, output_file,
+            info_needed=info_needed,
+            label_process=label_process,
+            sample_grid=sample_grid, val_result_pth=val_result_pth
+        )
+        print(f"场景 {scene_id} 耗时：{time.time() - time_starti}\n")
+        print(" ")
+    print(f"预处理 总耗时：{time.time() - time_start0}")
+
+# 当前不用了
+def preprocess_BIMTwins_batch_备份20251204(
         dataset_root, output_root,
         info_needed=['coords', 'colors', 'labels', 'normals'],
         label_process='label05_V1',
         sample_grid=0.4, val_result_pth=True
 ):
+    if not os.path.exists(dataset_root + "/train"):
+        raise FileNotFoundError(f"错误: 当前处理方式，需要‘train、val’等子文件夹！")
     # 1 数据地址
     # 查找所有ply文件
     sceneList = sorted(glob.glob(dataset_root + "/train/*.ply"))
@@ -257,6 +291,89 @@ def preprocess_BIMTwins_batch(
         print(f"场景 {scene_id} 耗时：{time.time() - time_starti}")
         print(" ")
     print(f"预处理 总耗时：{time.time() - time_start0}")
+
+def prepare_data_from_folder( dataset_root, output_root,):
+    '''
+    数据准备：根据文件结构准备数据。
+    注意：
+        1、不支持复制多块使用
+        2、不支持分块
+    params:
+        data_path_from  输入数据地址
+        data_path_to    写出pth地址
+        pre_data_dict   使用的数据{train:'',val:'',tes:''}
+    return:             返回输入输出的文件对
+    '''
+    return_list_pair=[]
+    subfolders = ['train', 'val', 'test']
+    for subfolder in subfolders:
+        # 0 判断合法
+        if subfolder == 'train' or subfolder == 'val':
+            if not os.path.exists(os.path.join(dataset_root, subfolder)):
+                raise FileNotFoundError(f"错误: 当前处理方式，需要‘train、val’等子文件夹！")
+        out_subfolder = os.path.join(output_root, subfolder)
+        os.makedirs(out_subfolder, exist_ok=True)
+        # 1 捕捉所有数据
+        sceneList = sorted(glob.glob(os.path.join(dataset_root, subfolder,"*.ply")))
+        if len(sceneList) == 0:
+            if subfolder == 'train' or subfolder == 'val':
+                print (f"‘train、val’等子文件夹为空！")
+            else:
+                continue
+        for input_file in sceneList:
+            # 生成文件名
+            # subFoler = os.path.split(os.path.split(input_file)[0])[1]  # 'train'
+            scene_id = os.path.splitext(os.path.split(input_file)[1])[0]  # 'JXY'
+            output_file = os.path.join(output_root, subfolder, f"{scene_id}.pth")
+            return_list_pair.append((input_file, output_file))
+
+    # 2 创建输出文件地址
+    train_output_dir = os.path.join(output_root, "train")
+    os.makedirs(train_output_dir, exist_ok=True)
+    val_output_dir = os.path.join(output_root, "val")
+    os.makedirs(val_output_dir, exist_ok=True)
+    test_output_dir = os.path.join(output_root, "test")
+    os.makedirs(test_output_dir, exist_ok=True)
+
+    return return_list_pair
+
+def prepare_data_from_dict(data_path_from, data_path_to, pre_data_dict):
+    '''
+    数据准备：根据字典中的文件名，构建训练数据
+    TODO：
+        1、新增支持复制多块使用
+        2、新增支持分块
+    params:
+        data_path_from  输入数据地址
+        data_path_to    写出pth地址
+        pre_data_dict   使用的数据{train:'',val:'',tes:''}
+    return:             返回输入输出的文件对
+    '''
+    if ("train" not in pre_data_dict.keys()) or ("val" not in pre_data_dict.keys()):
+        raise FileNotFoundError(f"错误: 当前处理方式，需要‘train、val’等子文件夹！")
+    if len(pre_data_dict["train"])==0 or len(pre_data_dict["val"])==0:
+        raise ValueError(f"【警告】没有训练数据！")
+
+    return_list_pair =[]
+    # 0 创建列表
+    for subFoler, scene_ids in pre_data_dict.items():  # train、val、test
+        for scene_id in scene_ids:
+            input_file = os.path.join(data_path_from, f"{scene_id}.ply")
+            output_file = os.path.join(data_path_to, subFoler, f"{scene_id}.pth")
+            if not os.path.exists(input_file):
+                raise ValueError(f"【警告】未找到文件：{input_file}")
+            else:
+                return_list_pair.append((input_file, output_file))
+
+    # 1 创建输出文件地址
+    train_output_dir = os.path.join(data_path_to, "train")
+    os.makedirs(train_output_dir, exist_ok=True)
+    val_output_dir = os.path.join(data_path_to, "val")
+    os.makedirs(val_output_dir, exist_ok=True)
+    test_output_dir = os.path.join(data_path_to, "test")
+    os.makedirs(test_output_dir, exist_ok=True)
+
+    return return_list_pair
 
 def preprocess_BIMTwins_备份1130(
         input_file, output_file,
@@ -367,14 +484,72 @@ def preprocess_BIMTwins_batch_备份1130(
     parse_normals   是否使用点云法向
 '''
 if __name__ == "__main__":
-    # pth_info = torch.load(r"/home/xuek/桌面/TestData/PTV3_data/重建数据_版本2025.10.15_5class_1125/train/修改前label04_terrain3.pth")
-    # pth_info2 = torch.load(r"/home/xuek/桌面/TestData/PTV3_data/重建数据_版本2025.10.15_5class_1125/terrain3.pth")
-    #
-    # test = 1
+    '''
+    label_process 调用说明：
+        方法1： label_process = 'label05_V1'  
+            直接说明调用的标签版本，前提是数据集均为统一命名方式。
+            找不到则会选择最佳转换方式。
+        方法2： label_process = label_dict.LabelRegistry.label_mappings['label12_V1_to_label05_V1'] 
+            直接给出映射字典，会调用唯一标签执行映射。
+            存在多标签会报错
+        方法3： label_process = None 不修改标签，直接使用默认标签执行。
+    '''
+    if False:  # 批量处理：通过字典批量处理数据
+        # 1 参数配置
+        # 1）训练参数
+        info_needed = ['coords', 'colors', 'labels', 'normals']
+        label_process = 'label05_V1'
+        # label_process = label_dict.LabelRegistry.label_mappings['label12_V1_to_label05_V1']
+        # label_process = None
+        sample_grid = 0.4  # 采样大小：注意此处写死
+        # 2) 数据参数
+        data_path_from = f'datapath'
+        data_path_to = f"out"
+        pre_data_dict = {
+            'train': {'JXY12', '04HXKJC'},
+            'val': {'JXY3', '05YLZY'},
+            'test': {}
+        }
 
-    if True:  # 批量处理
-        dataset_root = r'/media/xuek/Data210/数据集/临时测试区/20251130修改数据版本/label12_修改标签_标准化'
-        output_root = r'/media/xuek/Data210/数据集/临时测试区/20251130修改数据版本/label12_修改标签_标准化_predict'
+        # 2 获取数据地址
+        io_listpair = prepare_data_from_dict(data_path_from, data_path_to, pre_data_dict)
+        # 3 批量处理
+        preprocess_BIMTwins_batch(
+            io_listpair,
+            info_needed=info_needed,
+            label_process=label_process,
+            sample_grid=sample_grid, val_result_pth=True
+        )
+    else:  # 批量处理：通过folder结构批量处理数据
+        # 1 参数配置
+        # 1）训练参数
+        info_needed = ['coords', 'colors', 'labels', 'normals']
+        label_process = 'label05_V1'
+        # label_process = label_dict.LabelRegistry.label_mappings['label12_V1_to_label05_V1']
+        # label_process = None
+        sample_grid = 0.4  # 采样大小：注意此处写死
+        # 2）数据参数
+        dataset_root = r'/media/xuek/Data210/数据集/临时测试区/20251130修改数据版本/temptest'
+        output_root = r'/media/xuek/Data210/数据集/临时测试区/20251130修改数据版本/temptest_predict'
+
+        # 2 获取数据地址
+        io_listpair = prepare_data_from_folder(dataset_root, output_root)
+        # 3 批量处理
+        preprocess_BIMTwins_batch(
+            io_listpair,
+            info_needed=info_needed,
+            label_process=label_process,
+            sample_grid=sample_grid, val_result_pth=True
+        )
+
+
+
+
+
+
+    if False:  # 批量处理（上一版）
+        dataset_root = r'/media/xuek/Data210/数据集/临时测试区/20251130修改数据版本/temptest'
+        output_root = r'/media/xuek/Data210/数据集/临时测试区/20251130修改数据版本/temptest_predict'
         info_needed = ['coords', 'colors', 'labels', 'normals']
         '''
         label_process 调用说明：
