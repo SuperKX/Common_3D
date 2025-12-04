@@ -93,7 +93,7 @@ def cloudinfo_to_ptv3dict(cloud_info, sample_grid=0.4):
     else:  # 构造假标签
         print("没有找到标签！")
         labels_sub = np.zeros((len(coords_sub),), dtype=np.int8)  # 创建一个假的标签值
-    save_dict["semantic_gt20"] = labels_sub
+    save_dict["semantic_gt20"] = labels_sub.astype(np.int8)  # 注意：ptv3要求格式
     # 写出
     if False:
         cloud_ndarray=np.hstack([coords_sub,colors_sub,labels_sub.reshape(-1, 1)])
@@ -150,7 +150,7 @@ def get_ply_file_info(ply_file, info_needed=['coords', 'colors', 'labels', 'norm
             labels_list = label_dict.LabelRegistry.labels_correct_from_ply(points_dict.keys())
             # 1) 计算最优标签映射
             label_input_name, label_mapping = label_dict.LabelRegistry.label_map(labels_list, label_name)
-            labels = points_dict[label_input_name]
+            labels = points_dict['label_'+label_input_name]
             # 2) 进行标签映射
             print(f'原始标签统计：')
             points_eval.label_rate(labels)
@@ -367,10 +367,14 @@ def preprocess_BIMTwins_batch_备份1130(
     parse_normals   是否使用点云法向
 '''
 if __name__ == "__main__":
+    # pth_info = torch.load(r"/home/xuek/桌面/TestData/PTV3_data/重建数据_版本2025.10.15_5class_1125/train/修改前label04_terrain3.pth")
+    # pth_info2 = torch.load(r"/home/xuek/桌面/TestData/PTV3_data/重建数据_版本2025.10.15_5class_1125/terrain3.pth")
+    #
+    # test = 1
 
     if True:  # 批量处理
-        dataset_root = r'/media/xuek/Data210/数据集/临时测试区/训练集_temp'
-        output_root = r'/media/xuek/Data210/数据集/临时测试区/训练集_temp_out'
+        dataset_root = r'/media/xuek/Data210/数据集/临时测试区/20251130修改数据版本/label12_修改标签_标准化'
+        output_root = r'/media/xuek/Data210/数据集/临时测试区/20251130修改数据版本/label12_修改标签_标准化_predict'
         info_needed = ['coords', 'colors', 'labels', 'normals']
         '''
         label_process 调用说明：
@@ -382,8 +386,8 @@ if __name__ == "__main__":
                 存在多标签会报错
             方法3： label_process = None 不修改标签，直接使用默认标签执行。
         '''
-        # label_process = 'label05_V1'
-        label_process = label_dict.LabelRegistry.label_mappings['label12_V1_to_label05_V1']
+        label_process = 'label05_V1'
+        # label_process = label_dict.LabelRegistry.label_mappings['label12_V1_to_label05_V1']
         # label_process = None
         sample_grid = 0.4  # 采样大小：注意此处写死
         preprocess_BIMTwins_batch(
@@ -392,7 +396,6 @@ if __name__ == "__main__":
             label_process=label_process,
             sample_grid=sample_grid, val_result_pth=True
         )
-
 
     # 预处理数据  # 弃用
     if False:  # 单个数据
