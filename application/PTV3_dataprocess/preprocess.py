@@ -310,7 +310,7 @@ def prepare_data_from_folder( dataset_root, output_root,):
         # 0 判断合法
         if subfolder == 'train' or subfolder == 'val':
             if not os.path.exists(os.path.join(dataset_root, subfolder)):
-                raise FileNotFoundError(f"错误: 当前处理方式，需要‘train、val’等子文件夹！")
+                print(f"错误: 当前处理方式，需要‘train、val’等子文件夹！")
         out_subfolder = os.path.join(output_root, subfolder)
         os.makedirs(out_subfolder, exist_ok=True)
         # 1 捕捉所有数据
@@ -494,7 +494,7 @@ if __name__ == "__main__":
             存在多标签会报错
         方法3： label_process = None 不修改标签，直接使用默认标签执行。
     '''
-    if False:  # 批量处理：通过字典批量处理数据
+    if True:  # 批量处理：接口1：通过字典批量处理数据
         # 1 参数配置
         # 1）训练参数
         info_needed = ['coords', 'colors', 'labels', 'normals']
@@ -503,14 +503,10 @@ if __name__ == "__main__":
         # label_process = None
         sample_grid = 0.4  # 采样大小：注意此处写死
         # 2) 数据参数
-        data_path_from = f'datapath'
-        data_path_to = f"out"
-        pre_data_dict = {
-            'train': {'JXY12', '04HXKJC'},
-            'val': {'JXY3', '05YLZY'},
-            'test': {}
-        }
-
+        data_path_from = f'/media/xuek/Data210/数据集/训练集/重建数据_动态维护_ply'
+        data_path_to = f"/media/xuek/Data210/数据集/训练集/重建数据_动态维护_pth"
+        import data_dict
+        pre_data_dict = data_dict.data_version20240905  # 数据版本
         # 2 获取数据地址
         io_listpair = prepare_data_from_dict(data_path_from, data_path_to, pre_data_dict)
         # 3 批量处理
@@ -520,17 +516,17 @@ if __name__ == "__main__":
             label_process=label_process,
             sample_grid=sample_grid, val_result_pth=True
         )
-    else:  # 批量处理：通过folder结构批量处理数据
+    else:  # 批量处理：接口2：通过folder结构批量处理数据
         # 1 参数配置
         # 1）训练参数
         info_needed = ['coords', 'colors', 'labels', 'normals']
-        label_process = 'label05_V1'
+        label_process = 'label05_V1'  # 使用的标签版本
         # label_process = label_dict.LabelRegistry.label_mappings['label12_V1_to_label05_V1']
         # label_process = None
         sample_grid = 0.4  # 采样大小：注意此处写死
         # 2）数据参数
-        dataset_root = r'/media/xuek/Data210/数据集/临时测试区/20251130修改数据版本/temptest'
-        output_root = r'/media/xuek/Data210/数据集/临时测试区/20251130修改数据版本/temptest_predict'
+        dataset_root = r'/media/xuek/Data210/数据集/临时测试区/20251206训练信息/1修改的训练数据'
+        output_root = r'/media/xuek/Data210/数据集/临时测试区/20251206训练信息/2生成权重文件'
 
         # 2 获取数据地址
         io_listpair = prepare_data_from_folder(dataset_root, output_root)

@@ -70,7 +70,9 @@ class LabelRegistry:
         '''
         筛选所有标签名，并更正。
         专门为ply文件读写使用的标签矫正，去除ply文件读入后的前缀element名，如"vertex_", "label_"
-
+        注意：
+            1、当前只处理"vertex_", "label_"开头的标签名，不删除coords等已输入的标签。
+            2、当前对于同名标签会重复放入，未增加筛选机制。
         参数：
             labels_in   输入标签，“elenmet名_label名”，如"vertex_class", "label_label12_V1"
             return      去除前缀"vertex_", "label_"的结果
