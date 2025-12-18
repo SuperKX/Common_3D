@@ -63,7 +63,7 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
                 "类别定义": {
                     "背景类": "包含平坦、斜坡等地面类型",
                     "建筑类": "包含高楼、民房、临建等建筑类型",
-                    "车辆类": "包含普通汽车、工程车辆等车辆类型",
+                    "车辆类": "包含普通汽车、工程汽车等车辆类型",
                     "高植被类": "树木等高大植被",
                     "低植被类": "草地、灌木等低矮植被"
                 }
@@ -94,7 +94,7 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
         "民房": "民房",
         "临建": "临建",
         "普通汽车": "普通汽车",
-        "工程车辆": "工程车辆"
+        "工程汽车": "工程汽车"
     }
 
     # 1 点云信息
@@ -120,7 +120,7 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
             global_category_info[label_names[label_id]]["子类分布"]["临建"] = 0.0
         elif label_id == 2:  # 车辆
             global_category_info[label_names[label_id]]["子类分布"]["普通汽车"] = 0.0
-            global_category_info[label_names[label_id]]["子类分布"]["工程车辆"] = 0.0
+            global_category_info[label_names[label_id]]["子类分布"]["工程汽车"] = 0.0
 
     for sub_folder in sub_folders:
         sub_folder_path = os.path.join(data_folder, sub_folder)
@@ -158,7 +158,7 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
                 dataset_category_info[label_names[label_id]]["子类分布"]["临建"] = 0.0
             elif label_id == 2:  # 车辆
                 dataset_category_info[label_names[label_id]]["子类分布"]["普通汽车"] = 0.0
-                dataset_category_info[label_names[label_id]]["子类分布"]["工程车辆"] = 0.0
+                dataset_category_info[label_names[label_id]]["子类分布"]["工程汽车"] = 0.0
 
         filelist = path_process.get_files_by_format(sub_folder_path, formats=['.pth'], return_full_path=False)
 
