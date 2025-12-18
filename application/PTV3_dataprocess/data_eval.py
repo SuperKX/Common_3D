@@ -35,10 +35,44 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
 
     # 初始化数据结构，按照JSON格式
     result = {
-        "全局数据信息": {
+        "元数据": {
+            "生成时间": "",
+            "数据说明": {
+                "总体说明": "本文件统计了点云分割数据集的分布信息，包括全局统计、各数据集统计以及场景级详细信息。",
+                "层级说明": {
+                    "全局级别": "统计所有数据集的汇总信息",
+                    "数据集级别": "分别统计train/val/test三个数据集的信息",
+                    "场景级别": "统计每个场景的详细信息"
+                },
+                "指标含义": {
+                    "场景数量": "包含的场景文件总数",
+                    "点云数量": "该层级包含的所有点云总数",
+                    "类别点云数量": "某个类别（如背景、建筑）的点云数量",
+                    "占总点云比例": "类别点云数量 / 全局总点云数量",
+                    "占数据集比例": "类别点云数量 / 该数据集总点云数量",
+                    "占场景比例": "类别点云数量 / 该场景总点云数量",
+                    "子类分布": {
+                        "说明": "某个类别中子类别的分布情况",
+                        "计算规则": {
+                            "场景级别": "存在的子类别平均分配（例如：同时存在平坦和斜坡，则各占50%）",
+                            "数据集级别": "子类实际数量占比（子类点云数 / 该类别所有子类点云总数）",
+                            "全局级别": "子类实际数量占比（子类点云数 / 该类别所有子类点云总数）"
+                        }
+                    }
+                },
+                "类别定义": {
+                    "背景类": "包含平坦、斜坡等地面类型",
+                    "建筑类": "包含高楼、民房、临建等建筑类型",
+                    "车辆类": "包含普通汽车、工程车辆等车辆类型",
+                    "高植被类": "树木等高大植被",
+                    "低植被类": "草地、灌木等低矮植被"
+                }
+            }
+        },
+        "全局统计": {
             "场景数量": 0,
-            "点云数量": 0,
-            "各类别信息": {}
+            "总点云数量": 0,
+            "各类别统计": {}
         },
         "数据集分布": {}
     }
@@ -72,20 +106,21 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
     # 初始化全局类别统计
     for label_id in label_names:
         global_category_info[label_names[label_id]] = {
-            "点云数量": 0,
-            "点云占比": 0.0
+            "类别点云数量": 0,
+            "占总点云比例": 0.0,
+            "子类分布": {}
         }
         # 添加子类别字段
         if label_id == 0:  # 背景
-            global_category_info[label_names[label_id]]["平坦占比"] = 0.0
-            global_category_info[label_names[label_id]]["斜坡占比"] = 0.0
+            global_category_info[label_names[label_id]]["子类分布"]["平坦"] = 0.0
+            global_category_info[label_names[label_id]]["子类分布"]["斜坡"] = 0.0
         elif label_id == 1:  # 建筑
-            global_category_info[label_names[label_id]]["高楼占比"] = 0.0
-            global_category_info[label_names[label_id]]["民房占比"] = 0.0
-            global_category_info[label_names[label_id]]["临建占比"] = 0.0
+            global_category_info[label_names[label_id]]["子类分布"]["高楼"] = 0.0
+            global_category_info[label_names[label_id]]["子类分布"]["民房"] = 0.0
+            global_category_info[label_names[label_id]]["子类分布"]["临建"] = 0.0
         elif label_id == 2:  # 车辆
-            global_category_info[label_names[label_id]]["普通汽车占比"] = 0.0
-            global_category_info[label_names[label_id]]["工程车辆占比"] = 0.0
+            global_category_info[label_names[label_id]]["子类分布"]["普通汽车"] = 0.0
+            global_category_info[label_names[label_id]]["子类分布"]["工程车辆"] = 0.0
 
     for sub_folder in sub_folders:
         sub_folder_path = os.path.join(data_folder, sub_folder)
@@ -94,12 +129,12 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
 
         # 初始化数据集信息
         result["数据集分布"][sub_folder] = {
-            f"{sub_folder}集数据信息": {
+            "数据集统计": {
                 "场景数量": 0,
-                "点云数量": 0,
-                "各类别信息": copy.deepcopy(global_category_info)
+                "数据集总点云": 0,
+                "各类别统计": copy.deepcopy(global_category_info)
             },
-            "每个场景信息": {}
+            "场景详情": {}
         }
 
         dataset_total_points = 0
@@ -109,20 +144,21 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
         # 初始化数据集类别统计
         for label_id in label_names:
             dataset_category_info[label_names[label_id]] = {
-                "点云数量": 0,
-                "点云占比": 0.0
+                "类别点云数量": 0,
+                "占数据集比例": 0.0,
+                "子类分布": {}
             }
             # 添加子类别字段
             if label_id == 0:  # 背景
-                dataset_category_info[label_names[label_id]]["平坦占比"] = 0.0
-                dataset_category_info[label_names[label_id]]["斜坡占比"] = 0.0
+                dataset_category_info[label_names[label_id]]["子类分布"]["平坦"] = 0.0
+                dataset_category_info[label_names[label_id]]["子类分布"]["斜坡"] = 0.0
             elif label_id == 1:  # 建筑
-                dataset_category_info[label_names[label_id]]["高楼占比"] = 0.0
-                dataset_category_info[label_names[label_id]]["民房占比"] = 0.0
-                dataset_category_info[label_names[label_id]]["临建占比"] = 0.0
+                dataset_category_info[label_names[label_id]]["子类分布"]["高楼"] = 0.0
+                dataset_category_info[label_names[label_id]]["子类分布"]["民房"] = 0.0
+                dataset_category_info[label_names[label_id]]["子类分布"]["临建"] = 0.0
             elif label_id == 2:  # 车辆
-                dataset_category_info[label_names[label_id]]["普通汽车占比"] = 0.0
-                dataset_category_info[label_names[label_id]]["工程车辆占比"] = 0.0
+                dataset_category_info[label_names[label_id]]["子类分布"]["普通汽车"] = 0.0
+                dataset_category_info[label_names[label_id]]["子类分布"]["工程车辆"] = 0.0
 
         filelist = path_process.get_files_by_format(sub_folder_path, formats=['.pth'], return_full_path=False)
 
@@ -150,12 +186,13 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
                 category_name = label_names.get(label_id, f"类别{label_id}")
 
                 # 更新数据集类别统计
-                dataset_category_info[category_name]["点云数量"] += label_info['数量']
+                dataset_category_info[category_name]["类别点云数量"] += label_info['数量']
 
                 # 更新场景类别信息
                 scene_category_info[category_name] = {
-                    "点云数量": label_info['数量'],
-                    "点云占比": label_info['比例']
+                    "类别点云数量": label_info['数量'],
+                    "占场景比例": label_info['比例'],
+                    "子类分布": {}
                 }
 
                 # 添加子类别信息
@@ -170,13 +207,14 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
                     sub_ratio = 1.0 / len(subcategories)
                     for sub in subcategories:
                         # 场景级别：子类别占父类的比例
-                        scene_category_info[category_name][f"{sub}占比"] = sub_ratio
+                        scene_category_info[category_name]["子类分布"][sub] = sub_ratio
 
                         # 数据集级别：累计子类别数量
-                        dataset_category_info[category_name][f"{sub}占比"] += label_info[sub]
+                        if sub in dataset_category_info[category_name]["子类分布"]:
+                            dataset_category_info[category_name]["子类分布"][sub] += label_info[sub]
 
             # 添加场景信息到结果
-            result["数据集分布"][sub_folder]["每个场景信息"][file_name] = scene_category_info
+            result["数据集分布"][sub_folder]["场景详情"][file_name] = scene_category_info
 
             # 输出子类别信息
             print(f"  子类别分布信息:")
@@ -189,78 +227,69 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
                 print(info_str)
 
         # 更新数据集信息
-        result["数据集分布"][sub_folder][f"{sub_folder}集数据信息"]["场景数量"] = dataset_scene_count
-        result["数据集分布"][sub_folder][f"{sub_folder}集数据信息"]["点云数量"] = dataset_total_points
+        result["数据集分布"][sub_folder]["数据集统计"]["场景数量"] = dataset_scene_count
+        result["数据集分布"][sub_folder]["数据集统计"]["数据集总点云"] = dataset_total_points
 
         # 计算数据集类别占比
         for category_name in dataset_category_info:
             if dataset_total_points > 0:
-                dataset_category_info[category_name]["点云占比"] = dataset_category_info[category_name]["点云数量"] / dataset_total_points
+                dataset_category_info[category_name]["占数据集比例"] = dataset_category_info[category_name]["类别点云数量"] / dataset_total_points
 
             # 计算子类别占比（子类别在父类中的占比）
-            parent_count = dataset_category_info[category_name]["点云数量"]
-            if parent_count > 0:
+            parent_count = dataset_category_info[category_name]["类别点云数量"]
+            if parent_count > 0 and "子类分布" in dataset_category_info[category_name]:
                 # 首先统计所有子类别的总数
                 total_sub_count = 0
-                for key in dataset_category_info[category_name]:
-                    if key.endswith("占比") and key != "点云占比":
-                        total_sub_count += dataset_category_info[category_name][key]
+                for sub in dataset_category_info[category_name]["子类分布"]:
+                    total_sub_count += dataset_category_info[category_name]["子类分布"][sub]
 
                 # 然后计算每个子类别在父类中的占比（总和为1）
                 if total_sub_count > 0:
-                    for key in dataset_category_info[category_name]:
-                        if key.endswith("占比") and key != "点云占比":
-                            dataset_category_info[category_name][key] = dataset_category_info[category_name][key] / total_sub_count
-                else:
-                    # 如果没有子类别数据，设置为0
-                    for key in dataset_category_info[category_name]:
-                        if key.endswith("占比") and key != "点云占比":
-                            dataset_category_info[category_name][key] = 0.0
+                    for sub in dataset_category_info[category_name]["子类分布"]:
+                        dataset_category_info[category_name]["子类分布"][sub] = dataset_category_info[category_name]["子类分布"][sub] / total_sub_count
 
-        result["数据集分布"][sub_folder][f"{sub_folder}集数据信息"]["各类别信息"] = dataset_category_info
+        result["数据集分布"][sub_folder]["数据集统计"]["各类别统计"] = dataset_category_info
 
         # 更新全局统计
         global_total_scenes += dataset_scene_count
         global_total_points += dataset_total_points
 
         for category_name in global_category_info:
-            global_category_info[category_name]["点云数量"] += dataset_category_info[category_name]["点云数量"]
+            global_category_info[category_name]["类别点云数量"] += dataset_category_info[category_name]["类别点云数量"]
 
             # 累计子类别数量
-            for key in global_category_info[category_name]:
-                if key.endswith("占比") and key != "点云占比":
-                    global_category_info[category_name][key] += dataset_category_info[category_name].get(key, 0)
+            if "子类分布" in global_category_info[category_name] and "子类分布" in dataset_category_info[category_name]:
+                for sub in global_category_info[category_name]["子类分布"]:
+                    if sub in dataset_category_info[category_name]["子类分布"]:
+                        global_category_info[category_name]["子类分布"][sub] += dataset_category_info[category_name]["子类分布"][sub]
+
+    # 添加生成时间到元数据
+    import datetime
+    result["元数据"]["生成时间"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # 更新全局信息
-    result["全局数据信息"]["场景数量"] = global_total_scenes
-    result["全局数据信息"]["点云数量"] = global_total_points
+    result["全局统计"]["场景数量"] = global_total_scenes
+    result["全局统计"]["总点云数量"] = global_total_points
 
     # 计算全局类别占比
     for category_name in global_category_info:
         if global_total_points > 0:
-            global_category_info[category_name]["点云占比"] = global_category_info[category_name]["点云数量"] / global_total_points
+            global_category_info[category_name]["占总点云比例"] = global_category_info[category_name]["类别点云数量"] / global_total_points
 
         # 计算子类别占比（子类别在父类中的占比）
-        parent_count = global_category_info[category_name]["点云数量"]
-        if parent_count > 0:
+        parent_count = global_category_info[category_name]["类别点云数量"]
+        if parent_count > 0 and "子类分布" in global_category_info[category_name]:
             # 首先统计所有子类别的总数
             total_sub_count = 0
-            for key in global_category_info[category_name]:
-                if key.endswith("占比") and key != "点云占比":
-                    total_sub_count += global_category_info[category_name][key]
+            for sub in global_category_info[category_name]["子类分布"]:
+                total_sub_count += global_category_info[category_name]["子类分布"][sub]
 
             # 然后计算每个子类别在父类中的占比（总和为1）
             if total_sub_count > 0:
-                for key in global_category_info[category_name]:
-                    if key.endswith("占比") and key != "点云占比":
-                        global_category_info[category_name][key] = global_category_info[category_name][key] / total_sub_count
-            else:
-                # 如果没有子类别数据，设置为0
-                for key in global_category_info[category_name]:
-                    if key.endswith("占比") and key != "点云占比":
-                        global_category_info[category_name][key] = 0.0
+                for sub in global_category_info[category_name]["子类分布"]:
+                    global_category_info[category_name]["子类分布"][sub] = global_category_info[category_name]["子类分布"][sub] / total_sub_count
 
-    result["全局数据信息"]["各类别信息"] = global_category_info
+    result["全局统计"]["各类别统计"] = global_category_info
 
     # 转换numpy类型为Python原生类型
     def convert_numpy(obj):
@@ -366,7 +395,7 @@ def update_scene_info_with_sublabels(scene_info, scene_name):
 
 
 if __name__ == '__main__':
-    data_folder = r'/media/xuek/Data210/数据集/临时测试区/20251216训练/5_pth'
+    data_folder = r'/media/xuek/Data210/数据集/训练集/重建数据_动态维护_pth'
     output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/数据分布信息.json'
 
     eval_train_data(data_folder, output_json)
