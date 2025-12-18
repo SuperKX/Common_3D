@@ -317,20 +317,412 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
 
 
 
-    # 2 输出
-    PW("数据质量评估结果：", eval_file)
-    # 2.1 输出算量
-    PW("总数据集评估：", eval_file)
-
-
-
-
-
-
-
         # 2 评估推理结果问题
-# 混淆矩阵
 
+
+# 评估两个PLY文件的标签对比
+def eval_two_ply_files(ply_file1, ply_file2, label_name1, label_name2, output_json=None, class_num=5):
+    '''
+    评估两个PLY文件的标签对比，计算混淆矩阵和精度指标
+
+    参数:
+        ply_file1: 第一个PLY文件路径
+        ply_file2: 第二个PLY文件路径
+        label_name1: 第一个文件的标签字段名
+        label_name2: 第二个文件的标签字段名
+        output_json: 输出JSON文件路径（可选）
+        class_num: 类别数量（默认为5）
+
+    返回:
+        包含评估结果的字典
+    '''
+    import points.points_eval as points_eval
+    import points.points_io as points_io
+    import datetime
+
+    print(f"\n开始评估两个PLY文件:")
+    print(f"文件1: {ply_file1}, 标签字段: {label_name1}")
+    print(f"文件2: {ply_file2}, 标签字段: {label_name2}")
+
+    # 读取第一个文件的标签
+    points_dict1 = points_io.parse_cloud_to_dict(ply_file1)
+    if label_name1 not in points_dict1:
+        raise ValueError(f'文件1没有找到标签字段 {label_name1}：{ply_file1}')
+    labels1 = points_dict1[label_name1]
+    print(f"文件1标签数量: {len(labels1)}")
+
+    # 读取第二个文件的标签
+    points_dict2 = points_io.parse_cloud_to_dict(ply_file2)
+    if label_name2 not in points_dict2:
+        raise ValueError(f'文件2没有找到标签字段 {label_name2}：{ply_file2}')
+    labels2 = points_dict2[label_name2]
+    print(f"文件2标签数量: {len(labels2)}")
+
+    # 检查标签数量是否一致
+    if len(labels1) != len(labels2):
+        print(f"警告：两个文件的标签数量不一致！文件1: {len(labels1)}, 文件2: {len(labels2)}")
+        # 取最小长度进行比较
+        min_len = min(len(labels1), len(labels2))
+        labels1 = labels1[:min_len]
+        labels2 = labels2[:min_len]
+        print(f"截取前 {min_len} 个点进行比较")
+
+    # 确保标签是numpy数组
+    if not isinstance(labels1, np.ndarray):
+        labels1 = np.array(labels1)
+    if not isinstance(labels2, np.ndarray):
+        labels2 = np.array(labels2)
+
+    # 打印标签的基本统计信息
+    print(f"\n标签统计信息:")
+    print(f"文件1 - 标签范围: {labels1.min()} 到 {labels1.max()}")
+    print(f"文件2 - 标签范围: {labels2.min()} 到 {labels2.max()}")
+
+    # 统计每个类别的数量
+    unique1, counts1 = np.unique(labels1, return_counts=True)
+    unique2, counts2 = np.unique(labels2, return_counts=True)
+    print(f"\n文件1标签分布:")
+    for u, c in zip(unique1, counts1):
+        print(f"  类别 {u}: {c} 个点")
+    print(f"\n文件2标签分布:")
+    for u, c in zip(unique2, counts2):
+        print(f"  类别 {u}: {c} 个点")
+
+    # 计算混淆矩阵
+    confusion_matrix = points_eval.label_eval(labels1, labels2, class_num)
+
+    # 计算各项指标
+    recall, precision, iou = points_eval.eval_result(confusion_matrix, class_num)
+
+    # 类别名称映射
+    label_names = {
+        0: "背景类",
+        1: "建筑类",
+        2: "车辆类",
+        3: "高植被类",
+        4: "低植被类"
+    }
+
+    # 构建结果字典
+    result = {
+        "元数据": {
+            "评估时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "评估说明": {
+                "目的": "比较两个PLY文件的标签差异",
+                "文件1": {
+                    "路径": ply_file1,
+                    "标签字段": label_name1,
+                    "文件名": os.path.basename(ply_file1)
+                },
+                "文件2": {
+                    "路径": ply_file2,
+                    "标签字段": label_name2,
+                    "文件名": os.path.basename(ply_file2)
+                },
+                "类别数量": class_num,
+                "指标说明": {
+                    "召回率(Recall)": "真正例/(真正例+假负例) - 检出率",
+                    "精确率(Precision)": "真正例/(真正例+假正例) - 查准率",
+                    "IoU": "交并比 - 交集中面积/并集面积"
+                }
+            }
+        },
+        "混淆矩阵": {
+            "说明": "行代表真实标签(文件1)，列代表预测标签(文件2)",
+            "矩阵": confusion_matrix.tolist(),
+            "类别顺序": [f"{i}:{label_names.get(i, f'类别{i}')}" for i in range(class_num)]
+        },
+        "详细指标": {},
+        "平均指标": {
+            "平均召回率": float(np.mean(recall)),
+            "平均精确率": float(np.mean(precision)),
+            "平均IoU": float(np.mean(iou))
+        }
+    }
+
+    # 添加各类别的详细指标
+    for i in range(class_num):
+        class_name = label_names.get(i, f"类别{i}")
+        result["详细指标"][class_name] = {
+            "类别ID": i,
+            "召回率": float(recall[i]),
+            "精确率": float(precision[i]),
+            "IoU": float(iou[i])
+        }
+
+    # 输出结果到控制台
+    print("\n评估结果:")
+    print("=" * 60)
+    for i in range(class_num):
+        class_name = label_names.get(i, f"类别{i}")
+        print(f"{class_name:8s}: Recall={recall[i]:.2%}, Precision={precision[i]:.2%}, IoU={iou[i]:.2%}")
+    print("-" * 60)
+    print(f"{'平均':8s}: Recall={np.mean(recall):.2%}, Precision={np.mean(precision):.2%}, IoU={np.mean(iou):.2%}")
+
+    # 输出JSON文件
+    if output_json:
+        # 转换numpy类型
+        def convert_numpy(obj):
+            if isinstance(obj, dict):
+                return {k: convert_numpy(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy(v) for v in obj]
+            elif isinstance(obj, (np.integer, np.int64, np.int32)):
+                return int(obj)
+            elif isinstance(obj, (np.floating, np.float64, np.float32)):
+                return float(obj)
+            else:
+                return obj
+
+        result_converted = convert_numpy(result)
+
+        with open(output_json, 'w', encoding='utf-8') as f:
+            json.dump(result_converted, f, ensure_ascii=False, indent=4)
+        print(f"\n评估结果已保存到: {output_json}")
+
+    return result
+
+
+# 批量评估两个文件夹下的PLY文件对比
+def eval_ply_folder_comparison(folder1, folder2, label_name1, label_name2, output_json=None, class_num=5, formats=['.ply']):
+    '''
+    批量比较两个文件夹下同名PLY文件的标签差异
+
+    参数:
+        folder1: 第一个文件夹路径
+        folder2: 第二个文件夹路径
+        label_name1: 第一个文件夹文件的标签字段名
+        label_name2: 第二个文件夹文件的标签字段名
+        output_json: 输出JSON文件路径（可选）
+        class_num: 类别数量（默认为5）
+        formats: 支持的文件格式列表
+
+    返回:
+        包含所有文件评估结果的字典
+    '''
+    import points.points_eval as points_eval
+    import points.points_io as points_io
+    import datetime
+    import path.path_process as path_process
+
+    print(f"\n开始批量评估两个文件夹的PLY文件:")
+    print(f"文件夹1: {folder1}, 标签字段: {label_name1}")
+    print(f"文件夹2: {folder2}, 标签字段: {label_name2}")
+
+    # 获取两个文件夹的文件列表
+    files1 = path_process.get_files_by_format(folder1, formats, return_full_path=False)
+    files2 = path_process.get_files_by_format(folder2, formats, return_full_path=True)
+
+    # 创建文件名到完整路径的映射
+    file2_path_map = {}
+    for file_path in files2:
+        filename = os.path.basename(file_path)
+        file2_path_map[filename] = file_path
+
+    # 统计结果
+    all_results = {
+        "元数据": {
+            "评估时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "评估说明": {
+                "目的": "批量比较两个文件夹下同名PLY文件的标签差异",
+                "文件夹1": {
+                    "路径": folder1,
+                    "文件数量": len(files1),
+                    "标签字段": label_name1
+                },
+                "文件夹2": {
+                    "路径": folder2,
+                    "文件数量": len(files2),
+                    "标签字段": label_name2
+                },
+                "类别数量": class_num,
+                "指标说明": {
+                    "召回率(Recall)": "真正例/(真正例+假负例) - 检出率",
+                    "精确率(Precision)": "真正例/(真正例+假正例) - 查准率",
+                    "IoU": "交并比 - 交集中面积/并集面积"
+                }
+            }
+        },
+        "文件对比结果": {},
+        "汇总统计": {
+            "成功对比的文件数": 0,
+            "失败的文件数": 0,
+            "平均召回率": 0.0,
+            "平均精确率": 0.0,
+            "平均IoU": 0.0,
+            "各类别平均指标": {}
+        }
+    }
+
+    # 类别名称映射
+    label_names = {
+        0: "背景类",
+        1: "建筑类",
+        2: "车辆类",
+        3: "高植被类",
+        4: "低植被类"
+    }
+
+    # 初始化各类别累计指标
+    total_recall = np.zeros(class_num)
+    total_precision = np.zeros(class_num)
+    total_iou = np.zeros(class_num)
+    valid_files = 0
+
+    # 遍历文件夹1中的文件
+    for filename in files1:
+        # 尝试多种匹配方式
+        file2_path = None
+        matched_file2_name = None
+
+        # 获取文件夹1文件的基本名称（不带扩展名）
+        base_name = os.path.splitext(filename)[0]
+
+        # 在文件夹2的所有文件中搜索匹配的文件
+        for file2_name, file2_full_path in file2_path_map.items():
+            # 如果文件夹2的文件名包含文件夹1的基本名称，则认为匹配
+            if base_name in file2_name:
+                file2_path = file2_full_path
+                matched_file2_name = file2_name
+                print(f"  找到匹配文件: {filename} <-> {file2_name}")
+                break
+
+        if file2_path:
+            file1_path = os.path.join(folder1, filename)
+
+            try:
+                print(f"\n处理文件: {filename}")
+
+                # 读取第一个文件的标签
+                points_dict1 = points_io.parse_cloud_to_dict(file1_path)
+                if label_name1 not in points_dict1:
+                    print(f"  警告：文件1没有找到标签字段 {label_name1}，跳过")
+                    continue
+                labels1 = points_dict1[label_name1]
+
+                # 读取第二个文件的标签
+                points_dict2 = points_io.parse_cloud_to_dict(file2_path)
+                if label_name2 not in points_dict2:
+                    print(f"  警告：文件2没有找到标签字段 {label_name2}，跳过")
+                    continue
+                labels2 = points_dict2[label_name2]
+
+                # 检查标签数量是否一致
+                if len(labels1) != len(labels2):
+                    print(f"  警告：标签数量不一致！文件1: {len(labels1)}, 文件2: {len(labels2)}")
+                    min_len = min(len(labels1), len(labels2))
+                    labels1 = labels1[:min_len]
+                    labels2 = labels2[:min_len]
+                    print(f"  截取前 {min_len} 个点进行比较")
+
+                # 确保标签是numpy数组
+                if not isinstance(labels1, np.ndarray):
+                    labels1 = np.array(labels1)
+                if not isinstance(labels2, np.ndarray):
+                    labels2 = np.array(labels2)
+
+                # 计算混淆矩阵
+                confusion_matrix = points_eval.label_eval(labels1, labels2, class_num)
+
+                # 计算各项指标
+                recall, precision, iou = points_eval.eval_result(confusion_matrix, class_num)
+
+                # 保存单文件结果
+                file_result = {
+                    "文件1": {
+                        "文件名": filename,
+                        "完整路径": file1_path
+                    },
+                    "文件2": {
+                        "文件名": matched_file2_name,
+                        "完整路径": file2_path
+                    },
+                    "点云数量": len(labels1),
+                    "混淆矩阵": confusion_matrix.tolist(),
+                    "详细指标": {}
+                }
+
+                # 添加各类别的详细指标
+                for i in range(class_num):
+                    class_name = label_names.get(i, f"类别{i}")
+                    file_result["详细指标"][class_name] = {
+                        "召回率": float(recall[i]),
+                        "精确率": float(precision[i]),
+                        "IoU": float(iou[i])
+                    }
+
+                all_results["文件对比结果"][filename] = file_result
+
+                # 累计指标用于汇总统计
+                total_recall += recall
+                total_precision += precision
+                total_iou += iou
+                valid_files += 1
+
+                # 输出单文件结果
+                print(f"  平均指标: Recall={np.mean(recall):.2%}, Precision={np.mean(precision):.2%}, IoU={np.mean(iou):.2%}")
+
+            except Exception as e:
+                print(f"  错误：处理文件 {filename} 时出错 - {str(e)}")
+                all_results["汇总统计"]["失败的文件数"] += 1
+        else:
+            print(f"警告：文件夹2中没有找到文件 {filename}")
+
+    # 更新汇总统计
+    all_results["汇总统计"]["成功对比的文件数"] = valid_files
+    all_results["汇总统计"]["失败的文件数"] = len(files1) - valid_files
+
+    if valid_files > 0:
+        # 计算平均指标
+        avg_recall = total_recall / valid_files
+        avg_precision = total_precision / valid_files
+        avg_iou = total_iou / valid_files
+
+        all_results["汇总统计"]["平均召回率"] = float(np.mean(avg_recall))
+        all_results["汇总统计"]["平均精确率"] = float(np.mean(avg_precision))
+        all_results["汇总统计"]["平均IoU"] = float(np.mean(avg_iou))
+
+        # 各类别平均指标
+        for i in range(class_num):
+            class_name = label_names.get(i, f"类别{i}")
+            all_results["汇总统计"]["各类别平均指标"][class_name] = {
+                "平均召回率": float(avg_recall[i]),
+                "平均精确率": float(avg_precision[i]),
+                "平均IoU": float(avg_iou[i])
+            }
+
+    # 输出汇总结果
+    print("\n" + "="*60)
+    print("批量评估汇总:")
+    print(f"成功对比文件数: {valid_files}")
+    print(f"失败文件数: {len(files1) - valid_files}")
+    if valid_files > 0:
+        print(f"平均召回率: {all_results['汇总统计']['平均召回率']:.2%}")
+        print(f"平均精确率: {all_results['汇总统计']['平均精确率']:.2%}")
+        print(f"平均IoU: {all_results['汇总统计']['平均IoU']:.2%}")
+
+    # 输出JSON文件
+    if output_json:
+        # 转换numpy类型
+        def convert_numpy(obj):
+            if isinstance(obj, dict):
+                return {k: convert_numpy(v) for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [convert_numpy(v) for v in obj]
+            elif isinstance(obj, (np.integer, np.int64, np.int32)):
+                return int(obj)
+            elif isinstance(obj, (np.floating, np.float64, np.float32)):
+                return float(obj)
+            else:
+                return obj
+
+        result_converted = convert_numpy(all_results)
+
+        with open(output_json, 'w', encoding='utf-8') as f:
+            json.dump(result_converted, f, ensure_ascii=False, indent=4)
+        print(f"\n批量评估结果已保存到: {output_json}")
+
+    return all_results
 
 
 # 3 评估模型问题
@@ -395,7 +787,17 @@ def update_scene_info_with_sublabels(scene_info, scene_name):
 
 
 if __name__ == '__main__':
-    data_folder = r'/media/xuek/Data210/数据集/训练集/重建数据_动态维护_pth'
-    output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/数据分布信息.json'
+    # 示例1: 评估数据分布
+    # data_folder = r'/media/xuek/Data210/数据集/训练集/重建数据_动态维护_pth'
+    # output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/数据分布信息.json'
+    # eval_train_data(data_folder, output_json)
 
-    eval_train_data(data_folder, output_json)
+    # 示例2: 批量评估两个文件夹下的PLY文件对比
+    folder1 = r'/media/xuek/Data210/数据集/训练集/重建数据_动态维护_ply'  # 第一个文件夹路径
+    folder2 = r'/media/xuek/Data210/数据集/临时测试区/20251216_2版本'  # 第二个文件夹路径
+    label_name1 = 'label_label05_V1'  # 第一个文件夹文件的标签字段名
+    label_name2 = 'class_class'  # 第二个文件夹文件的标签字段名
+    output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/ply批量评估结果.json'
+
+    # 执行批量评估
+    eval_ply_folder_comparison(folder1, folder2, label_name1, label_name2, output_json)
