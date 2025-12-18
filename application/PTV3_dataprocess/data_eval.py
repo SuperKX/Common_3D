@@ -38,10 +38,10 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
         "元数据": {
             "生成时间": "",
             "数据说明": {
-                "总体说明": "本文件统计了点云分割数据集的分布信息，包括全局统计、各数据集统计以及场景级详细信息。",
+                "总体说明": "本文件统计了点云分割数据集的分布信息，包括全局统计、各分组统计以及场景级详细信息。",
                 "层级说明": {
                     "全局级别": "统计所有数据集的汇总信息",
-                    "数据集级别": "分别统计train/val/test三个数据集的信息",
+                    "分组级别": "分别统计train/val/test三个分组的信息",
                     "场景级别": "统计每个场景的详细信息"
                 },
                 "指标含义": {
@@ -49,8 +49,10 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
                     "点云数量": "该层级包含的所有点云总数",
                     "类别点云数量": "某个类别（如背景、建筑）的点云数量",
                     "占总点云比例": "类别点云数量 / 全局总点云数量",
-                    "占数据集比例": "类别点云数量 / 该数据集总点云数量",
+                    "占分组比例": "类别点云数量 / 该分组（train/val/test）总点云数量",
                     "占场景比例": "类别点云数量 / 该场景总点云数量",
+                    "场景占全局比例": "场景点云数量 / 全局总点云数量",
+                    "场景占分组比例": "场景点云数量 / 所在分组（train/val/test）总点云数量",
                     "子类分布": {
                         "说明": "某个类别中子类别的分布情况",
                         "计算规则": {
@@ -103,6 +105,9 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
     global_total_scenes = 0
     global_category_info = {}
 
+    # 存储每个场景的点云数量，用于后续计算比例
+    scene_points_info = {}  # 格式: {sub_folder: {scene_name: pts_num}}
+
     # 初始化全局类别统计
     for label_id in label_names:
         global_category_info[label_names[label_id]] = {
@@ -129,9 +134,9 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
 
         # 初始化数据集信息
         result["数据集分布"][sub_folder] = {
-            "数据集统计": {
+            "分组统计": {
                 "场景数量": 0,
-                "数据集总点云": 0,
+                "分组总点云": 0,
                 "各类别统计": copy.deepcopy(global_category_info)
             },
             "场景详情": {}
@@ -140,12 +145,13 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
         dataset_total_points = 0
         dataset_scene_count = 0
         dataset_category_info = {}
+        scene_points_info[sub_folder] = {}  # 初始化该数据集的场景点云数量字典
 
         # 初始化数据集类别统计
         for label_id in label_names:
             dataset_category_info[label_names[label_id]] = {
                 "类别点云数量": 0,
-                "占数据集比例": 0.0,
+                "占分组比例": 0.0,
                 "子类分布": {}
             }
             # 添加子类别字段
@@ -164,9 +170,15 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
 
         for file in filelist:
             scenei_info = dict()
-            file_name = os.path.splitext(file)[0]
+            # 获取文件名并去除_1216后缀
+            file_name_raw = os.path.splitext(file)[0]
+            if file_name_raw.endswith('_1216'):
+                file_name = file_name_raw[:-5]  # 去掉最后的_1216
+            else:
+                file_name = file_name_raw
+
             file_path = os.path.join(sub_folder_path, file)
-            print(f"处理文件: {file_name}")
+            print(f"处理文件: {file_name_raw} -> {file_name}")
             pth_info = torch.load(file_path)
             label = pth_info['semantic_gt20']
             scenei_info['pts_num'] = label.size
@@ -181,6 +193,12 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
 
             # 场景信息
             scene_category_info = {}
+
+            # 计算场景在全局和数据集中的比例
+            scene_pts_num = scenei_info['pts_num']
+
+            # 存储场景点云数量
+            scene_points_info[sub_folder][file_name] = scene_pts_num
 
             for label_id, label_info in scenei_info_with_sublabels['labels'].items():
                 category_name = label_names.get(label_id, f"类别{label_id}")
@@ -213,8 +231,14 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
                         if sub in dataset_category_info[category_name]["子类分布"]:
                             dataset_category_info[category_name]["子类分布"][sub] += label_info[sub]
 
+            # 创建场景信息字典，包含点云数量和类别统计
+            scene_info = {
+                "场景点云数量": scene_pts_num,
+                "各类别统计": scene_category_info
+            }
+
             # 添加场景信息到结果
-            result["数据集分布"][sub_folder]["场景详情"][file_name] = scene_category_info
+            result["数据集分布"][sub_folder]["场景详情"][file_name] = scene_info
 
             # 输出子类别信息
             print(f"  子类别分布信息:")
@@ -227,13 +251,13 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
                 print(info_str)
 
         # 更新数据集信息
-        result["数据集分布"][sub_folder]["数据集统计"]["场景数量"] = dataset_scene_count
-        result["数据集分布"][sub_folder]["数据集统计"]["数据集总点云"] = dataset_total_points
+        result["数据集分布"][sub_folder]["分组统计"]["场景数量"] = dataset_scene_count
+        result["数据集分布"][sub_folder]["分组统计"]["分组总点云"] = dataset_total_points
 
         # 计算数据集类别占比
         for category_name in dataset_category_info:
             if dataset_total_points > 0:
-                dataset_category_info[category_name]["占数据集比例"] = dataset_category_info[category_name]["类别点云数量"] / dataset_total_points
+                dataset_category_info[category_name]["占分组比例"] = dataset_category_info[category_name]["类别点云数量"] / dataset_total_points
 
             # 计算子类别占比（子类别在父类中的占比）
             parent_count = dataset_category_info[category_name]["类别点云数量"]
@@ -248,7 +272,7 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
                     for sub in dataset_category_info[category_name]["子类分布"]:
                         dataset_category_info[category_name]["子类分布"][sub] = dataset_category_info[category_name]["子类分布"][sub] / total_sub_count
 
-        result["数据集分布"][sub_folder]["数据集统计"]["各类别统计"] = dataset_category_info
+        result["数据集分布"][sub_folder]["分组统计"]["各类别统计"] = dataset_category_info
 
         # 更新全局统计
         global_total_scenes += dataset_scene_count
@@ -290,6 +314,24 @@ def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
                     global_category_info[category_name]["子类分布"][sub] = global_category_info[category_name]["子类分布"][sub] / total_sub_count
 
     result["全局统计"]["各类别统计"] = global_category_info
+
+    # 为每个场景添加在全局和所在数据集的比例
+    for sub_folder in sub_folders:
+        if sub_folder in result["数据集分布"] and "场景详情" in result["数据集分布"][sub_folder]:
+            # 获取该数据集的总点云数
+            dataset_total = result["数据集分布"][sub_folder]["分组统计"]["分组总点云"]
+
+            for scene_name, scene_info in result["数据集分布"][sub_folder]["场景详情"].items():
+                # 添加场景在全局和数据集中的比例
+                scene_pts = scene_info["场景点云数量"]
+
+                # 计算比例
+                global_ratio = scene_pts / global_total_points if global_total_points > 0 else 0.0
+                dataset_ratio = scene_pts / dataset_total if dataset_total > 0 else 0.0
+
+                # 添加到场景信息中
+                scene_info["场景占全局比例"] = global_ratio
+                scene_info["场景占分组比例"] = dataset_ratio
 
     # 转换numpy类型为Python原生类型
     def convert_numpy(obj):
@@ -728,6 +770,308 @@ def eval_ply_folder_comparison(folder1, folder2, label_name1, label_name2, outpu
 # 3 评估模型问题
 
 
+# 评估场景处理优先级
+def evaluate_scene_priority(data_distribution_json, ply_eval_json, output_json=None):
+    '''
+    评估场景处理优先级
+    根据点云数量和IoU计算优先级分数
+
+    参数:
+        data_distribution_json: 数据分布信息JSON文件路径
+        ply_eval_json: PLY批量评估结果JSON文件路径
+        output_json: 输出文件路径（可选）
+                     如果提供，将生成CSV表格文件和JSON详细文件
+
+    返回:
+        包含每个场景优先级分数的字典
+
+    输出:
+        - CSV文件: 表格格式，每行一个场景，每列一个类别及平均优先级
+        - JSON文件: 保留完整的评估信息和统计数据
+    '''
+    import datetime
+
+    print("\n开始评估场景处理优先级...")
+    print(f"数据分布文件: {data_distribution_json}")
+    print(f"PLY评估文件: {ply_eval_json}")
+
+    # 读取数据分布信息
+    with open(data_distribution_json, 'r', encoding='utf-8') as f:
+        data_dist = json.load(f)
+
+    # 读取PLY评估结果
+    with open(ply_eval_json, 'r', encoding='utf-8') as f:
+        ply_eval = json.load(f)
+
+    # 初始化结果字典
+    result = {
+        "元数据": {
+            "评估时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "评估说明": {
+                "目的": "根据点云数量和IoU评估场景处理优先级",
+                "评分规则": {
+                    "优先级计算": "点云占比 × 类别场景占比 × (1 - IoU)",
+                    "含义": "点云越多、IoU越低的场景和类别，处理优先级越高"
+                },
+                "输入文件": {
+                    "数据分布文件": data_distribution_json,
+                    "PLY评估文件": ply_eval_json
+                }
+            }
+        },
+        "场景优先级评分": {},
+        "汇总统计": {
+            "总场景数": 0,
+            "各分组统计": {
+                "train": {"场景数": 0, "平均优先级": 0.0},
+                "val": {"场景数": 0, "平均优先级": 0.0},
+                "test": {"场景数": 0, "平均优先级": 0.0}
+            },
+            "各类别优先级排行": {}
+        }
+    }
+
+    # 类别名称映射
+    class_names = {
+        0: "背景类",
+        1: "建筑类",
+        2: "车辆类",
+        3: "高植被类",
+        4: "低植被类"
+    }
+
+    # 遍历数据分布中的场景
+    total_scenes = 0
+    all_priority_scores = []
+
+    for sub_folder in ["train", "val", "test"]:
+        if sub_folder in data_dist["数据集分布"]:
+            scenes = data_dist["数据集分布"][sub_folder]["场景详情"]
+            group_total_points = data_dist["数据集分布"][sub_folder]["分组统计"]["分组总点云"]
+
+            result["汇总统计"]["各分组统计"][sub_folder]["场景数"] = len(scenes)
+            group_priorities = []
+
+            for scene_name, scene_info in scenes.items():
+                # 在PLY评估结果中查找匹配的文件
+                matched_eval = None
+                for eval_scene, eval_info in ply_eval["文件对比结果"].items():
+                    # 检查场景名称是否匹配
+                    if scene_name in eval_scene or eval_scene in scene_name:
+                        matched_eval = eval_info
+                        break
+
+                if not matched_eval:
+                    print(f"警告：未找到场景 {scene_name} 的PLY评估结果")
+                    continue
+
+                # 计算该场景的优先级分数
+                scene_pts = scene_info["场景点云数量"]
+                scene_group_ratio = scene_info["场景占分组比例"]  # 场景在该分组中的占比
+
+                # 初始化场景评分字典
+                scene_scores = {
+                    "场景基本信息": {
+                        "分组": sub_folder,
+                        "点云数量": scene_pts,
+                        "场景占分组比例": scene_group_ratio,
+                        "场景占全局比例": scene_info["场景占全局比例"]
+                    },
+                    "类别优先级分数": {},
+                    "平均优先级分数": 0.0
+                }
+
+                class_scores = []
+
+                # 遍历每个类别
+                for class_name, class_info in scene_info["各类别统计"].items():
+                    # 查找对应的IoU
+                    class_iou = 0.0
+                    if class_name in matched_eval["详细指标"]:
+                        class_iou = matched_eval["详细指标"][class_name]["IoU"]
+                    else:
+                        print(f"警告：场景 {scene_name} 的类别 {class_name} 未找到IoU数据")
+
+                    # 获取类别在场景中的占比
+                    class_scene_ratio = class_info["占场景比例"]
+
+                    # 计算优先级分数：点云占比 × 类别场景占比 × (1 - IoU)
+                    priority_score = scene_group_ratio * class_scene_ratio * (1 - class_iou)
+
+                    scene_scores["类别优先级分数"][class_name] = {
+                        "类别在场景占比": class_scene_ratio,
+                        "类别IoU": class_iou,
+                        "优先级分数": priority_score
+                    }
+
+                    class_scores.append(priority_score)
+
+                # 计算场景平均优先级（去掉各类别在场景中占比的影响）
+                # 即：点云占比 × 平均(1 - IoU)
+                avg_1_minus_iou = 0
+                valid_classes = 0
+                for class_name in scene_scores["类别优先级分数"]:
+                    class_iou = scene_scores["类别优先级分数"][class_name]["类别IoU"]
+                    avg_1_minus_iou += (1 - class_iou)
+                    valid_classes += 1
+
+                if valid_classes > 0:
+                    avg_1_minus_iou /= valid_classes
+                    scene_avg_priority = scene_group_ratio * avg_1_minus_iou
+                else:
+                    scene_avg_priority = 0
+
+                scene_scores["平均优先级分数"] = scene_avg_priority
+
+                # 保存场景评分
+                result["场景优先级评分"][scene_name] = scene_scores
+                all_priority_scores.append(scene_avg_priority)
+                group_priorities.append(scene_avg_priority)
+                total_scenes += 1
+
+            # 计算分组平均优先级
+            if group_priorities:
+                result["汇总统计"]["各分组统计"][sub_folder]["平均优先级"] = sum(group_priorities) / len(group_priorities)
+
+    # 计算总统计
+    result["汇总统计"]["总场景数"] = total_scenes
+    if all_priority_scores:
+        result["汇总统计"]["总体平均优先级"] = sum(all_priority_scores) / len(all_priority_scores)
+
+    # 计算各类别的优先级排行
+    class_priority_dict = {}
+    for scene_name, scene_scores in result["场景优先级评分"].items():
+        for class_name, class_score in scene_scores["类别优先级分数"].items():
+            if class_name not in class_priority_dict:
+                class_priority_dict[class_name] = []
+            class_priority_dict[class_name].append({
+                "场景": scene_name,
+                "分数": class_score["优先级分数"]
+            })
+
+    # 对每个类别的场景按分数排序
+    for class_name, scores_list in class_priority_dict.items():
+        # 按分数降序排序
+        sorted_scores = sorted(scores_list, key=lambda x: x["分数"], reverse=True)
+        result["汇总统计"]["各类别优先级排行"][class_name] = sorted_scores[:10]  # 只保留前10个
+
+    # 输出结果
+    print("\n场景优先级评估完成！")
+    print(f"总共评估场景数: {total_scenes}")
+    if all_priority_scores:
+        print(f"总体平均优先级: {result['汇总统计']['总体平均优先级']:.4f}")
+
+    # 输出所有场景评分的表格
+    print("\n" + "="*140)
+    print(f"{'场景名':<25} {'分组':<8} {'点云数':<12} {'分组占比':<10} {'全局占比':<10} {'平均优先级':<12}")
+    print("="*140)
+
+    # 按优先级从高到低排序所有场景
+    sorted_scenes = sorted(result["场景优先级评分"].items(),
+                           key=lambda x: x[1]["平均优先级分数"],
+                           reverse=True)
+
+    for scene_name, scene_info in sorted_scenes:
+        basic = scene_info["场景基本信息"]
+        print(f"{scene_name:<25} {basic['分组']:<8} {basic['点云数量']:<12} "
+              f"{basic['场景占分组比例']:<10.2%} {basic['场景占全局比例']:<10.2%} "
+              f"{scene_info['平均优先级分数']:<12.4f}")
+
+    # 输出各类别优先级最高的场景（前5个）
+    print("\n" + "="*140)
+    print("\n各类别优先级最高的场景（前5个）：")
+    for class_name, top_scores in result["汇总统计"]["各类别优先级排行"].items():
+        if top_scores:
+            print(f"\n{class_name}:")
+            print("-" * 60)
+            print(f"{'排名':<5} {'场景名':<25} {'优先级分数':<12} {'类别占比':<10} {'IoU':<10} {'(1-IoU)':<10} {'评分分解':<25}")
+            print("-" * 90)
+
+            for i, item in enumerate(top_scores[:5], 1):
+                scene_info = result["场景优先级评分"][item['场景']]
+                class_score = scene_info["类别优先级分数"].get(class_name, {})
+                group_ratio = scene_info["场景基本信息"]["场景占分组比例"]
+                class_ratio = class_score.get('类别在场景占比', 0)
+                iou = class_score.get('类别IoU', 0)
+                priority = class_score.get('优先级分数', 0)
+
+                # 评分分解：group_ratio * class_ratio * (1-iou)
+                calc_check = f"{group_ratio:.3f} × {class_ratio:.3f} × {1-iou:.3f} = {priority:.6f}"
+
+                print(f"{i:<5} {item['场景']:<25} {item['分数']:<12.4f} "
+                      f"{class_ratio:<10.2%} {iou:<10.2%} {(1-iou):<10.2%} {calc_check}")
+
+    # 输出分组统计
+    print("\n" + "="*140)
+    print("\n各分组统计：")
+    print("-" * 50)
+    for group_name, group_stats in result["汇总统计"]["各分组统计"].items():
+        print(f"{group_name}: 场景数={group_stats['场景数']}, 平均优先级={group_stats['平均优先级']:.4f}")
+
+    # 输出CSV文件（表格格式）
+    if output_json:
+        # 将文件扩展名改为.csv
+        csv_output = output_json.replace('.json', '.csv')
+
+        # 准备CSV数据
+        # 收集所有类别名称
+        all_classes = set()
+        for scene_name, scene_scores in result["场景优先级评分"].items():
+            all_classes.update(scene_scores["类别优先级分数"].keys())
+        all_classes = sorted(list(all_classes))  # 排序以保证顺序一致
+
+        # 创建CSV行数据
+        csv_rows = []
+        # 表头
+        header = ['场景名称', '数据分组', '点云数量', '占分组比例', '占全局比例'] + all_classes + ['平均优先级']
+        csv_rows.append(header)
+
+        # 按平均优先级排序
+        sorted_scenes = sorted(result["场景优先级评分"].items(),
+                             key=lambda x: x[1]["平均优先级分数"],
+                             reverse=True)
+
+        # 每个场景的数据
+        for scene_name, scene_info in sorted_scenes:
+            basic = scene_info["场景基本信息"]
+            row = [
+                scene_name,
+                basic['分组'],
+                str(basic['点云数量']),
+                f"{basic['场景占分组比例']:.2%}",
+                f"{basic['场景占全局比例']:.2%}"
+            ]
+
+            # 各类别得分
+            class_scores = scene_info["类别优先级分数"]
+            for class_name in all_classes:
+                if class_name in class_scores:
+                    row.append(f"{class_scores[class_name]['优先级分数']:.3f}")
+                else:
+                    row.append("0.000")
+
+            # 平均优先级
+            row.append(f"{scene_info['平均优先级分数']:.3f}")
+
+            csv_rows.append(row)
+
+        # 写入CSV文件
+        import csv
+        with open(csv_output, 'w', encoding='utf-8-sig', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerows(csv_rows)
+
+        print(f"\n评估结果已保存到CSV文件: {csv_output}")
+
+        # 同时保存JSON格式以保留完整信息
+        json_output = output_json
+        with open(json_output, 'w', encoding='utf-8') as f:
+            json.dump(result, f, ensure_ascii=False, indent=4)
+        print(f"详细评估结果已保存到JSON文件: {json_output}")
+
+    return result
+
+
 # 新增函数：计算子类别占比
 def calculate_sublabel_ratio(scene_info, scene_name):
     '''
@@ -787,17 +1131,32 @@ def update_scene_info_with_sublabels(scene_info, scene_name):
 
 
 if __name__ == '__main__':
-    # 示例1: 评估数据分布
+    # # 示例1: 评估数据分布
     # data_folder = r'/media/xuek/Data210/数据集/训练集/重建数据_动态维护_pth'
-    # output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/数据分布信息.json'
+    output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/数据分布信息.json'
     # eval_train_data(data_folder, output_json)
 
     # 示例2: 批量评估两个文件夹下的PLY文件对比
-    folder1 = r'/media/xuek/Data210/数据集/训练集/重建数据_动态维护_ply'  # 第一个文件夹路径
-    folder2 = r'/media/xuek/Data210/数据集/临时测试区/20251216_2版本'  # 第二个文件夹路径
-    label_name1 = 'label_label05_V1'  # 第一个文件夹文件的标签字段名
-    label_name2 = 'class_class'  # 第二个文件夹文件的标签字段名
-    output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/ply批量评估结果.json'
+    # # 执行批量评估
+    # folder1 = r'/media/xuek/Data210/数据集/训练集/重建数据_动态维护_ply'  # 第一个文件夹路径
+    # folder2 = r'/media/xuek/Data210/数据集/临时测试区/20251216_2版本'  # 第二个文件夹路径
+    # label_name1 = 'label_label05_V1'  # 第一个文件夹文件的标签字段名
+    # label_name2 = 'class_class'  # 第二个文件夹文件的标签字段名
+    ply_output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/ply批量评估结果.json'
+    # eval_ply_folder_comparison(folder1, folder2, label_name1, label_name2, ply_output_json)
 
-    # 执行批量评估
-    eval_ply_folder_comparison(folder1, folder2, label_name1, label_name2, output_json)
+    # 示例3: 评估场景处理优先级
+    data_dist_json = output_json
+    ply_eval_json = ply_output_json
+    priority_output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/场景优先级评估.json'
+
+    # 评估场景优先级
+    evaluate_scene_priority(data_dist_json, ply_eval_json, priority_output_json)
+
+    print("\n" + "="*60)
+    print("所有任务完成！")
+    print("\n生成的文件:")
+    print(f"1. 数据分布信息: {output_json}")
+    print(f"2. PLY批量评估结果: {ply_output_json}")
+    print(f"3. 场景优先级评估 (CSV): {priority_output_json.replace('.json', '.csv')}")
+    print(f"4. 场景优先级评估 (详细JSON): {priority_output_json}")
