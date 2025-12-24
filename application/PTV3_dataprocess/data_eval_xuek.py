@@ -71,6 +71,11 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
                     label_counts[label_name] = count
                 for cat_name in category_columns:  # 类别数量
                     row_data[cat_name] = label_counts.get(cat_name, 0)
+                # 1.3 点云内数据占比
+                row_data['数据占比'] = 1
+                for cat_name in category_columns:  # 类别比例
+                    row_data['rt1_'+cat_name] = row_data[cat_name]/row_data['总点云数量']
+
                 all_data.append(row_data)
 
     # 转换为DataFrame
