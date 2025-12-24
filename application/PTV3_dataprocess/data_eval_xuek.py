@@ -39,6 +39,18 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
 
     # 存储所有数据
     all_data = []
+
+    # 各类别数量统计
+    class_sum = {'train':{}, 'val':{}, 'test':{}}
+    for cat_name in category_columns:
+        class_sum['train'][cat_name] = 0
+        class_sum['val'][cat_name] = 0
+        class_sum['test'][cat_name] = 0
+    class_sum['train']['分组点云总数'] = 0
+    class_sum['val']['分组点云总数'] = 0
+    class_sum['test']['分组点云总数'] = 0
+
+
     # points_num_class = {}
     # label_def
 
@@ -64,19 +76,32 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
                 # points_num_info = points_eval.file_label_info(ply_path, label_version)
 
                 # 1.2 点云数量
-                row_data['总点云数量'] = len(labels)
+                row_data['点云数量'] = len(labels)
                 label_counts = {}
                 for label_id, label_name in label_def.items():
                     count = np.sum(labels == label_id)
                     label_counts[label_name] = count
                 for cat_name in category_columns:  # 类别数量
                     row_data[cat_name] = label_counts.get(cat_name, 0)
-                # 1.3 点云内数据占比
+                    class_sum[group_name][cat_name] += row_data[cat_name]   # 各类别数量占比
+                    # 1.3 点云内数据占比
                 row_data['数据占比'] = 1
                 for cat_name in category_columns:  # 类别比例
-                    row_data['rt1_'+cat_name] = row_data[cat_name]/row_data['总点云数量']
+                    row_data['drt_'+cat_name] = row_data[cat_name]/row_data['点云数量']
 
                 all_data.append(row_data)
+    # 1.3 计算分组内类别比例
+    for cat_name in category_columns:
+        class_sum['train']['分组点云总数'] += class_sum['train'][cat_name]
+        class_sum['val']['分组点云总数'] += class_sum['val'][cat_name]
+        class_sum['test']['分组点云总数'] += class_sum['test'][cat_name]
+    for data_row in all_data:
+        data_row['分组占比-总点云'] = data_row['点云数量']/class_sum[data_row['分组']]['分组点云总数']
+        for cat_name in category_columns:
+            data_row['grt_' + cat_name] = data_row[cat_name] / class_sum[data_row['分组']][cat_name]
+
+
+
 
     # 转换为DataFrame
     df = pd.DataFrame(all_data)
