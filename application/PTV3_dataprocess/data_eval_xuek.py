@@ -125,6 +125,11 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
                     data_row[f'{cat_name}_recall'] = np.nan
                     data_row[f'{cat_name}_precision'] = np.nan
                     data_row[f'{cat_name}_iou'] = np.nan
+                # grass混淆度设为NaN
+                data_row['grass2background'] = np.nan
+                data_row['grass2vegetation'] = np.nan
+                data_row['background2grass'] = np.nan
+                data_row['vegetation2grass'] = np.nan
             else:
                 # 读取标签数据
                 labeled_dict = points_io.parse_cloud_to_dict(label_path)
@@ -132,7 +137,6 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
                 if not label_version_plystyle in labeled_dict:
                     raise ValueError(f"{scene_name}.ply 中没有{label_version}标签信息")
                 labels = labeled_dict[label_version_plystyle]
-
                 # 读取推理数据
                 pred_dict = points_io.parse_cloud_to_dict(pred_path)
                 label_version_pred_plystyle = 'label_' + label_version_pred
@@ -156,6 +160,45 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
                     data_row[f'{cat_name}_recall'] = score_rec[i]
                     data_row[f'{cat_name}_precision'] = score_pre[i]
                     data_row[f'{cat_name}_iou'] = score_iou[i]
+
+                # 1.6 混淆度计算（grass与background、vegetation的混淆比例）
+                # 获取grass、background、vegetation的标签ID
+                grass_id = background_id = vegetation_id = None
+                for label_id, label_name in label_def.items():
+                    if label_name == 'grass':
+                        grass_id = label_id
+                    elif label_name == 'background':
+                        background_id = label_id
+                    elif label_name == 'vegetation':
+                        vegetation_id = label_id
+
+                if grass_id is not None and background_id is not None and vegetation_id is not None:
+                    # grass被误分类为background的比例
+                    grass_true_count = np.sum(score_matrix[grass_id, :])
+                    if grass_true_count > 0:
+                        data_row['grass2background'] = score_matrix[grass_id][background_id] / grass_true_count
+                    else:
+                        data_row['grass2background'] = np.nan
+
+                    # grass被误分类为vegetation的比例
+                    if grass_true_count > 0:
+                        data_row['grass2vegetation'] = score_matrix[grass_id][vegetation_id] / grass_true_count
+                    else:
+                        data_row['grass2vegetation'] = np.nan
+
+                    # background被误分类为grass的比例
+                    background_true_count = np.sum(score_matrix[background_id, :])
+                    if background_true_count > 0:
+                        data_row['background2grass'] = score_matrix[background_id][grass_id] / background_true_count
+                    else:
+                        data_row['background2grass'] = np.nan
+
+                    # vegetation被误分类为grass的比例
+                    vegetation_true_count = np.sum(score_matrix[vegetation_id, :])
+                    if vegetation_true_count > 0:
+                        data_row['vegetation2grass'] = score_matrix[vegetation_id][grass_id] / vegetation_true_count
+                    else:
+                        data_row['vegetation2grass'] = np.nan
 
     # 转换为DataFrame
     df = pd.DataFrame(all_data)
