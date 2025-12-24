@@ -92,51 +92,13 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
                 for cat_name in category_columns:  # 类别数量
                     row_data[cat_name] = label_counts.get(cat_name, 0)
                     class_sum[group_name][cat_name] += row_data[cat_name]   # 各类别数量占比
-                    # 1.3 点云内数据占比
+                # 1.3 点云内数据占比
                 row_data['数据占比'] = 1
                 for cat_name in category_columns:  # 类别比例
                     row_data['drt_'+cat_name] = row_data[cat_name]/row_data['点云数量']
 
-            # 1.4 如果提供了推理文件夹，计算评估指标
-            if pred_folder:
-                pred_path = os.path.join(pred_folder, f"{scene_name}.ply")
-                if not os.path.exists(pred_path):
-                    print(f"警告: 未找到推理文件 {pred_path}，跳过评估")
-                    row_data['平均召回率'] = np.nan
-                    row_data['平均精确率'] = np.nan
-                    row_data['平均iou'] = np.nan
-                    # 各类别指标设为NaN
-                    for cat_name in category_columns:
-                        row_data[f'{cat_name}_recall'] = np.nan
-                        row_data[f'{cat_name}_precision'] = np.nan
-                        row_data[f'{cat_name}_iou'] = np.nan
-                else:
-                    # 读取推理数据
-                    pred_dict = points_io.parse_cloud_to_dict(pred_path)
-                    label_version_pred_plystyle = 'label_' + label_version_pred
-                    if not label_version_pred_plystyle in pred_dict:
-                        raise ValueError(f"{scene_name}.ply 中没有{label_version_pred}标签信息")
-                    labels_pred = pred_dict[label_version_pred_plystyle]
-
-                    # 计算混淆矩阵
-                    score_matrix = points_eval.matrix_eval(labels, labels_pred, class_num)
-
-                    # 计算评估指标
-                    score_rec, score_pre, score_iou = points_eval.eval_result(score_matrix, class_num)
-
-                    # 计算平均指标
-                    row_data['平均召回率'] = np.mean(score_rec)
-                    row_data['平均精确率'] = np.mean(score_pre)
-                    row_data['平均iou'] = np.mean(score_iou)
-
-                    # 各类别指标
-                    for i, cat_name in enumerate(category_columns):
-                        row_data[f'{cat_name}_recall'] = score_rec[i]
-                        row_data[f'{cat_name}_precision'] = score_pre[i]
-                        row_data[f'{cat_name}_iou'] = score_iou[i]
-
             all_data.append(row_data)
-    # 1.3 计算分组内类别比例
+    # 1.4 计算分组内类别比例
     for cat_name in category_columns:
         class_sum['train']['分组点云总数'] += class_sum['train'][cat_name]
         class_sum['val']['分组点云总数'] += class_sum['val'][cat_name]
@@ -145,6 +107,55 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
         data_row['分组占比-总点云'] = data_row['点云数量']/class_sum[data_row['分组']]['分组点云总数']
         for cat_name in category_columns:
             data_row['grt_' + cat_name] = data_row[cat_name] / class_sum[data_row['分组']][cat_name]
+
+    # 1.5 如果提供了推理文件夹，计算评估指标
+    if pred_folder:
+        for data_row in all_data:
+            scene_name = data_row['场景名']
+            label_path = os.path.join(data_folder, f"{scene_name}.ply")
+            pred_path = os.path.join(pred_folder, f"{scene_name}.ply")
+
+            if not os.path.exists(pred_path):
+                print(f"警告: 未找到推理文件 {pred_path}，跳过评估")
+                data_row['平均召回率'] = np.nan
+                data_row['平均精确率'] = np.nan
+                data_row['平均iou'] = np.nan
+                # 各类别指标设为NaN
+                for cat_name in category_columns:
+                    data_row[f'{cat_name}_recall'] = np.nan
+                    data_row[f'{cat_name}_precision'] = np.nan
+                    data_row[f'{cat_name}_iou'] = np.nan
+            else:
+                # 读取标签数据
+                labeled_dict = points_io.parse_cloud_to_dict(label_path)
+                label_version_plystyle = 'label_' + label_version
+                if not label_version_plystyle in labeled_dict:
+                    raise ValueError(f"{scene_name}.ply 中没有{label_version}标签信息")
+                labels = labeled_dict[label_version_plystyle]
+
+                # 读取推理数据
+                pred_dict = points_io.parse_cloud_to_dict(pred_path)
+                label_version_pred_plystyle = 'label_' + label_version_pred
+                if not label_version_pred_plystyle in pred_dict:
+                    raise ValueError(f"{scene_name}.ply 中没有{label_version_pred}标签信息")
+                labels_pred = pred_dict[label_version_pred_plystyle]
+
+                # 计算混淆矩阵
+                score_matrix = points_eval.matrix_eval(labels, labels_pred, class_num)
+
+                # 计算评估指标
+                score_rec, score_pre, score_iou = points_eval.eval_result(score_matrix, class_num)
+
+                # 计算平均指标
+                data_row['平均召回率'] = np.mean(score_rec)
+                data_row['平均精确率'] = np.mean(score_pre)
+                data_row['平均iou'] = np.mean(score_iou)
+
+                # 各类别指标
+                for i, cat_name in enumerate(category_columns):
+                    data_row[f'{cat_name}_recall'] = score_rec[i]
+                    data_row[f'{cat_name}_precision'] = score_pre[i]
+                    data_row[f'{cat_name}_iou'] = score_iou[i]
 
     # 转换为DataFrame
     df = pd.DataFrame(all_data)
