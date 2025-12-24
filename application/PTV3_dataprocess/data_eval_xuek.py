@@ -6,7 +6,8 @@ from application.PTV3_dataprocess import data_dict, label_dict
 import points.points_io as points_io
 import points.points_eval as points_eval
 
-def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=None, label_version='label05_V1'):
+def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=None, label_version='label05_V1',
+                             pred_folder=None, label_version_pred='label05_V1'):
     '''
     根据data_dict.py中的data_version20240905创建场景分组CSV表格
 
@@ -15,9 +16,12 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
         data_version: 数据版本字典（可选，默认使用data_version20240905）
         data_folder: 数据文件夹路径（可选，用于统计点云数量）
         label_version: 标签版本（可选，默认使用label05_V1）
+        pred_folder: 推理输出数据文件夹路径（可选，用于计算评估指标）
+        label_version_pred: 推理数据标签版本（可选，默认使用label05_V1）
 
     返回:
         DataFrame包含分组和场景名信息，以及点云数量统计（如果提供data_folder）
+        和评估指标（如果提供pred_folder）
     '''
     # 如果没有指定data_version，使用默认版本
     if data_version is None:
@@ -28,6 +32,7 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
         label_def = label_dict.LabelRegistry.label_def[label_version]
         # 根据标签定义生成类别列名
         category_columns = [label_def[i] for i in sorted(label_def.keys())]
+        class_num = len(label_def)
     else:
         raise ValueError(f"未找到标签版本: {label_version}")
 
@@ -36,6 +41,9 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
     print(f"标签版本: {label_version}")
     if data_folder:
         print(f"数据文件夹: {data_folder}")
+    if pred_folder:
+        print(f"推理文件夹: {pred_folder}")
+        print(f"推理标签版本: {label_version_pred}")
 
     # 存储所有数据
     all_data = []
@@ -89,7 +97,45 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
                 for cat_name in category_columns:  # 类别比例
                     row_data['drt_'+cat_name] = row_data[cat_name]/row_data['点云数量']
 
-                all_data.append(row_data)
+            # 1.4 如果提供了推理文件夹，计算评估指标
+            if pred_folder:
+                pred_path = os.path.join(pred_folder, f"{scene_name}.ply")
+                if not os.path.exists(pred_path):
+                    print(f"警告: 未找到推理文件 {pred_path}，跳过评估")
+                    row_data['平均召回率'] = np.nan
+                    row_data['平均精确率'] = np.nan
+                    row_data['平均iou'] = np.nan
+                    # 各类别指标设为NaN
+                    for cat_name in category_columns:
+                        row_data[f'{cat_name}_recall'] = np.nan
+                        row_data[f'{cat_name}_precision'] = np.nan
+                        row_data[f'{cat_name}_iou'] = np.nan
+                else:
+                    # 读取推理数据
+                    pred_dict = points_io.parse_cloud_to_dict(pred_path)
+                    label_version_pred_plystyle = 'label_' + label_version_pred
+                    if not label_version_pred_plystyle in pred_dict:
+                        raise ValueError(f"{scene_name}.ply 中没有{label_version_pred}标签信息")
+                    labels_pred = pred_dict[label_version_pred_plystyle]
+
+                    # 计算混淆矩阵
+                    score_matrix = points_eval.matrix_eval(labels, labels_pred, class_num)
+
+                    # 计算评估指标
+                    score_rec, score_pre, score_iou = points_eval.eval_result(score_matrix, class_num)
+
+                    # 计算平均指标
+                    row_data['平均召回率'] = np.mean(score_rec)
+                    row_data['平均精确率'] = np.mean(score_pre)
+                    row_data['平均iou'] = np.mean(score_iou)
+
+                    # 各类别指标
+                    for i, cat_name in enumerate(category_columns):
+                        row_data[f'{cat_name}_recall'] = score_rec[i]
+                        row_data[f'{cat_name}_precision'] = score_pre[i]
+                        row_data[f'{cat_name}_iou'] = score_iou[i]
+
+            all_data.append(row_data)
     # 1.3 计算分组内类别比例
     for cat_name in category_columns:
         class_sum['train']['分组点云总数'] += class_sum['train'][cat_name]
@@ -99,9 +145,6 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
         data_row['分组占比-总点云'] = data_row['点云数量']/class_sum[data_row['分组']]['分组点云总数']
         for cat_name in category_columns:
             data_row['grt_' + cat_name] = data_row[cat_name] / class_sum[data_row['分组']][cat_name]
-
-
-
 
     # 转换为DataFrame
     df = pd.DataFrame(all_data)
@@ -127,10 +170,13 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
             count = len(data_version[group_name])
             print(f"  {group_name}: {count} 个场景")
         print(f"  总计: {len(df)} 个场景")
-
     return df
 
 if __name__ == '__main__':
     output_csv =r'H:\commonFunc_3D\application\PTV3_dataprocess/输出测试.csv'
     label_folder = r'J:\DATASET\BIMTwins\版本备份\多标签_动态维护版'
-    generate_scene_group_csv(output_csv, data_folder=label_folder)
+    pred_folder = r"H:\TempProcess\20251220数据传输\2合并标签"
+    label_version_pred ="label05_V1_pred"
+    # 注意，内部会默认转ply风格的字典，不需要外部添加（待确定）
+    generate_scene_group_csv(output_csv, data_folder=label_folder,pred_folder=pred_folder,label_version_pred=label_version_pred)
+
