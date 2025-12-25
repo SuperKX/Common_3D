@@ -424,14 +424,27 @@ def csv_to_xlsx(csv_path, xlsx_path=None, columns_dict=None):
             elif cell.value in group_last_columns:
                 cell.border = right_border
 
-        # 为所有数据行设置属性组边框
+        # 为所有数据行设置属性组边框和"分组"/"场景名"列格式
         for row in worksheet.iter_rows(min_row=2):
             for cell in row:
                 column_name = worksheet.cell(1, cell.column).value
-                # 设置属性组左边框
+
+                # 设置"分组"和"场景名"列加粗
+                if column_name in ['分组', '场景名']:
+                    cell.font = Font(bold=True)
+
+                # 设置"分组"列的填充色
+                if column_name == '分组' and cell.value in ['train', 'val', 'test']:
+                    if cell.value == 'train':
+                        cell.fill = PatternFill(start_color='CFE2F3', end_color='CFE2F3', fill_type='solid')
+                    elif cell.value == 'val':
+                        cell.fill = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
+                    elif cell.value == 'test':
+                        cell.fill = PatternFill(start_color='C6E0B4', end_color='C6E0B4', fill_type='solid')
+
+                # 设置属性组边框
                 if column_name in group_first_columns:
                     cell.border = left_border
-                # 设置属性组右边框
                 elif column_name in group_last_columns:
                     cell.border = right_border
 
@@ -496,6 +509,9 @@ def csv_to_xlsx(csv_path, xlsx_path=None, columns_dict=None):
                                 # 2%-5%：紫色加粗
                                 cell.font = Font(bold=True, color='800080')
 
+        # 冻结前两列和第一行
+        worksheet.freeze_panes = "C2"
+
     print(f"\nXLSX文件已保存到: {xlsx_path}")
 
 
@@ -530,7 +546,8 @@ if __name__ == '__main__':
 #             ],
 #             "混淆对比": [
 #                 "grass2background", "grass2vegetation", "background2grass", "vegetation2grass"
-#             ]
+#             ],
+        #             "评分": ["优先级评分", "grass_混淆程度评分"]
 #         }
         columns_dict = {
             "点云统计": [
@@ -547,7 +564,8 @@ if __name__ == '__main__':
             ],
             "混淆对比": [
                 "grass2background", "grass2vegetation", "background2grass", "vegetation2grass"
-            ]
+            ],
+            "评分": ["优先级评分", "grass_混淆程度评分"]
         }
 
         csv_to_xlsx(input_csv, output_xlsx, columns_dict)
