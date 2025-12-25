@@ -231,6 +231,56 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
                 else:
                     data_row['grass_混淆程度评分'] = np.nan
 
+    # 1.8 计算所有数据的汇总精度统计
+    if pred_folder and data_folder:
+        # 初始化总混淆矩阵
+        total_score_matrix = np.zeros((class_num, class_num), dtype='int')
+
+        # 遍历所有数据行，累计混淆矩阵
+        for data_row in all_data:
+            scene_name = data_row['场景名']
+            label_path = os.path.join(data_folder, f"{scene_name}.ply")
+            pred_path = os.path.join(pred_folder, f"{scene_name}.ply")
+
+            if os.path.exists(pred_path):
+                try:
+                    # 读取标签数据
+                    labeled_dict = points_io.parse_cloud_to_dict(label_path)
+                    label_version_plystyle = 'label_' + label_version
+                    if label_version_plystyle in labeled_dict:
+                        labels = labeled_dict[label_version_plystyle]
+
+                        # 读取推理数据
+                        pred_dict = points_io.parse_cloud_to_dict(pred_path)
+                        label_version_pred_plystyle = 'label_' + label_version_pred
+                        if label_version_pred_plystyle in pred_dict:
+                            labels_pred = pred_dict[label_version_pred_plystyle]
+
+                            # 计算混淆矩阵并累加
+                            score_matrix = points_eval.matrix_eval(labels, labels_pred, class_num)
+                            total_score_matrix += score_matrix
+                except Exception as e:
+                    print(f"警告: 累计混淆矩阵时处理 {scene_name} 失败: {e}")
+
+        # 基于总混淆矩阵计算评估指标
+        score_rec, score_pre, score_iou = points_eval.eval_result(total_score_matrix, class_num)
+
+        # 创建汇总行
+        summary_row = {'分组': '', '场景名': '点云层精度统计'}
+
+        # 计算平均指标
+        summary_row['平均召回率'] = np.mean(score_rec)
+        summary_row['平均精确率'] = np.mean(score_pre)
+        summary_row['平均iou'] = np.mean(score_iou)
+
+        # 计算各类别指标
+        for i, cat_name in enumerate(category_columns):
+            summary_row[f'{cat_name}_recall'] = score_rec[i]
+            summary_row[f'{cat_name}_precision'] = score_pre[i]
+            summary_row[f'{cat_name}_iou'] = score_iou[i]
+
+        all_data.append(summary_row)
+
     # 转换为DataFrame
     df = pd.DataFrame(all_data)
 
@@ -522,7 +572,7 @@ def csv_to_xlsx(csv_path, xlsx_path=None, columns_dict=None):
 
 
 if __name__ == '__main__':
-    if False:  # 数据分析
+    if True:  # 数据分析
         output_csv = r'H:\commonFunc_3D\application\PTV3_dataprocess/输出测试.csv'
         label_folder = r'J:\DATASET\BIMTwins\版本备份\多标签_动态维护版'
         pred_folder = r"H:\TempProcess\20251220数据传输\2合并标签"
@@ -566,7 +616,10 @@ if __name__ == '__main__':
                 "分组占比-总点云", "grt_background", "grt_building", "grt_car", "grt_vegetation", "grt_grass"
             ],
             "精度统计": [
-                "平均召回率", "平均精确率", "平均iou", "grass_recall", "grass_precision", "grass_iou"
+                "平均召回率", "平均精确率", "平均iou", "background_recall", "background_precision",
+                "background_iou", "building_recall", "building_precision", "building_iou",
+                "car_recall", "car_precision", "car_iou", "vegetation_recall", "vegetation_precision",
+                "vegetation_iou", "grass_recall", "grass_precision", "grass_iou"
             ],
             "混淆对比": [
                 "grass2background", "grass2vegetation", "background2grass", "vegetation2grass"
