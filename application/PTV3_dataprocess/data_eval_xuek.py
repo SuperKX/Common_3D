@@ -258,13 +258,15 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
     return df
 
 
-def csv_to_xlsx(csv_path, xlsx_path=None):
+def csv_to_xlsx(csv_path, xlsx_path=None, columns_dict=None):
     '''
     读入CSV表格，并将标题加粗，特定列转换为百分比格式，写出xlsx格式
 
     参数:
         csv_path: 输入CSV文件路径
         xlsx_path: 输出xlsx文件路径（可选，默认与csv_path同目录，扩展名改为xlsx）
+        columns_dict: 属性字典，格式为 {'属性组名': ['列名1', '列名2', ...]}
+                      如果为None，则输出所有属性；否则只输出字典中指定的属性
 
     返回:
         None
@@ -275,6 +277,53 @@ def csv_to_xlsx(csv_path, xlsx_path=None):
 
     # 读取CSV文件
     df = pd.read_csv(csv_path, encoding='utf-8-sig')
+
+    # 定义完整的属性组
+    full_attribute_groups = {
+        '点云统计': ['点云数量', 'background', 'building', 'car', 'vegetation', 'grass'],
+        '场景比例': ['数据占比', 'drt_background', 'drt_building', 'drt_car', 'drt_vegetation', 'drt_grass'],
+        '分组类别比例': ['分组占比-总点云', 'grt_background', 'grt_building', 'grt_car', 'grt_vegetation', 'grt_grass'],
+        '精度统计': ['平均召回率', '平均精确率', '平均iou',
+                     'background_recall', 'background_precision', 'background_iou',
+                     'building_recall', 'building_precision', 'building_iou',
+                     'car_recall', 'car_precision', 'car_iou',
+                     'vegetation_recall', 'vegetation_precision', 'vegetation_iou',
+                     'grass_recall', 'grass_precision', 'grass_iou'],
+        '混淆对比': ['grass2background', 'grass2vegetation', 'background2grass', 'vegetation2grass'],
+        '评分': ['优先级评分', 'grass_混淆程度评分']
+    }
+
+    # 根据columns_dict筛选需要输出的列
+    if columns_dict is not None:
+        # 收集所有需要输出的列
+        output_columns = []
+        for group_name in columns_dict.keys():
+            if group_name in full_attribute_groups:
+                # 对于指定的属性组，只输出columns_dict中指定的列（存在于数据中的）
+                for col in columns_dict[group_name]:
+                    if col in df.columns:
+                        output_columns.append(col)
+        # 添加'分组'和'场景名'列（如果存在）
+        if '分组' in df.columns and '分组' not in output_columns:
+            output_columns.insert(0, '分组')
+        if '场景名' in df.columns and '场景名' not in output_columns:
+            if '分组' in output_columns:
+                output_columns.insert(1, '场景名')
+            else:
+                output_columns.insert(0, '场景名')
+        # 筛选DataFrame
+        df = df[output_columns]
+        # 根据筛选后的列更新属性组
+        attribute_groups = {}
+        for group_name in columns_dict.keys():
+            if group_name in full_attribute_groups:
+                # 只保留存在于输出数据中的列
+                valid_columns = [col for col in columns_dict[group_name] if col in df.columns]
+                if valid_columns:
+                    attribute_groups[group_name] = valid_columns
+    else:
+        # 使用完整的属性组
+        attribute_groups = full_attribute_groups
 
     # 需要转换为百分比的列名
     percent_columns = [
@@ -299,21 +348,6 @@ def csv_to_xlsx(csv_path, xlsx_path=None):
         # 导入样式模块
         from openpyxl.styles import Font, PatternFill, Border, Side
         from openpyxl.styles.numbers import FORMAT_PERCENTAGE_00
-
-        # 定义属性组
-        attribute_groups = {
-            '点云统计': ['点云数量', 'background', 'building', 'car', 'vegetation', 'grass'],
-            '场景比例': ['数据占比', 'drt_background', 'drt_building', 'drt_car', 'drt_vegetation', 'drt_grass'],
-            '分组类别比例': ['分组占比-总点云', 'grt_background', 'grt_building', 'grt_car', 'grt_vegetation', 'grt_grass'],
-            '精度统计': ['平均召回率', '平均精确率', '平均iou',
-                         'background_recall', 'background_precision', 'background_iou',
-                         'building_recall', 'building_precision', 'building_iou',
-                         'car_recall', 'car_precision', 'car_iou',
-                         'vegetation_recall', 'vegetation_precision', 'vegetation_iou',
-                         'grass_recall', 'grass_precision', 'grass_iou'],
-            '混淆对比': ['grass2background', 'grass2vegetation', 'background2grass', 'vegetation2grass'],
-            '评分': ['优先级评分', 'grass_混淆程度评分']
-        }
 
         # 定义标题填充色
         color_map = {
@@ -478,5 +512,43 @@ if __name__ == '__main__':
     if True:  # 数据格式优化
         input_csv = r'H:\commonFunc_3D\application\PTV3_dataprocess/输出测试.csv'
         output_xlsx = r'H:\commonFunc_3D\application\PTV3_dataprocess/输出测试.xlsx'
-        csv_to_xlsx(input_csv, output_xlsx)
+#         columns_dict = {
+#             "点云统计": [
+#                 "点云数量", "background", "building", "car", "vegetation", "grass"
+#             ],
+#             "场景比例": [
+#                 "数据占比", "drt_background", "drt_building", "drt_car", "drt_vegetation", "drt_grass"
+#             ],
+#             "分组类别比例": [
+#                 "分组占比-总点云", "grt_background", "grt_building", "grt_car", "grt_vegetation", "grt_grass"
+#             ],
+#             "精度统计": [
+#                 "平均召回率", "平均精确率", "平均iou", "background_recall", "background_precision",
+#                 "background_iou", "building_recall", "building_precision", "building_iou",
+#                 "car_recall", "car_precision", "car_iou", "vegetation_recall", "vegetation_precision",
+#                 "vegetation_iou", "grass_recall", "grass_precision", "grass_iou"
+#             ],
+#             "混淆对比": [
+#                 "grass2background", "grass2vegetation", "background2grass", "vegetation2grass"
+#             ]
+#         }
+        columns_dict = {
+            "点云统计": [
+                "点云数量", "background", "building", "car", "vegetation", "grass"
+            ],
+            "场景比例": [
+                 "drt_background", "drt_building", "drt_car", "drt_vegetation", "drt_grass"
+            ],
+            "分组类别比例": [
+                "分组占比-总点云", "grt_background", "grt_building", "grt_car", "grt_vegetation", "grt_grass"
+            ],
+            "精度统计": [
+                "平均召回率", "平均精确率", "平均iou", "grass_recall", "grass_precision", "grass_iou"
+            ],
+            "混淆对比": [
+                "grass2background", "grass2vegetation", "background2grass", "vegetation2grass"
+            ]
+        }
+
+        csv_to_xlsx(input_csv, output_xlsx, columns_dict)
 
