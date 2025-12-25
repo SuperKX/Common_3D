@@ -149,6 +149,8 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
 
                 # 计算混淆矩阵
                 score_matrix = points_eval.matrix_eval(labels, labels_pred, class_num)
+                # 保存混淆矩阵到data_row，用于后续汇总
+                data_row['_score_matrix'] = score_matrix
 
                 # 计算评估指标
                 score_rec, score_pre, score_iou = points_eval.eval_result(score_matrix, class_num)
@@ -236,31 +238,10 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
         # 初始化总混淆矩阵
         total_score_matrix = np.zeros((class_num, class_num), dtype='int')
 
-        # 遍历所有数据行，累计混淆矩阵
+        # 遍历所有数据行，直接使用已保存的混淆矩阵进行累加
         for data_row in all_data:
-            scene_name = data_row['场景名']
-            label_path = os.path.join(data_folder, f"{scene_name}.ply")
-            pred_path = os.path.join(pred_folder, f"{scene_name}.ply")
-
-            if os.path.exists(pred_path):
-                try:
-                    # 读取标签数据
-                    labeled_dict = points_io.parse_cloud_to_dict(label_path)
-                    label_version_plystyle = 'label_' + label_version
-                    if label_version_plystyle in labeled_dict:
-                        labels = labeled_dict[label_version_plystyle]
-
-                        # 读取推理数据
-                        pred_dict = points_io.parse_cloud_to_dict(pred_path)
-                        label_version_pred_plystyle = 'label_' + label_version_pred
-                        if label_version_pred_plystyle in pred_dict:
-                            labels_pred = pred_dict[label_version_pred_plystyle]
-
-                            # 计算混淆矩阵并累加
-                            score_matrix = points_eval.matrix_eval(labels, labels_pred, class_num)
-                            total_score_matrix += score_matrix
-                except Exception as e:
-                    print(f"警告: 累计混淆矩阵时处理 {scene_name} 失败: {e}")
+            if '_score_matrix' in data_row:
+                total_score_matrix += data_row['_score_matrix']
 
         # 基于总混淆矩阵计算评估指标
         score_rec, score_pre, score_iou = points_eval.eval_result(total_score_matrix, class_num)
@@ -280,6 +261,11 @@ def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=Non
             summary_row[f'{cat_name}_iou'] = score_iou[i]
 
         all_data.append(summary_row)
+
+    # 删除临时列_score_matrix
+    for data_row in all_data:
+        if '_score_matrix' in data_row:
+            del data_row['_score_matrix']
 
     # 转换为DataFrame
     df = pd.DataFrame(all_data)
@@ -572,7 +558,42 @@ def csv_to_xlsx(csv_path, xlsx_path=None, columns_dict=None):
 
 
 if __name__ == '__main__':
-    if True:  # 数据分析
+    if True:  # 数据分析+可视优化
+        data_version = "V20251218"  # 模型版本
+        label_folder = r'H:\TempProcess\20251220数据传输\2合并标签'
+        pred_folder = r"H:\TempProcess\20251220数据传输\2合并标签"
+        output_csv = r'H:\commonFunc_3D\application\PTV3_dataprocess/评价结果'+data_version+'_1数据.csv'
+        label_version_pred = "label05_V1_pred"
+        # 注意，内部会默认转ply风格的字典，不需要外部添加（待确定）
+        generate_scene_group_csv(output_csv, data_folder=label_folder, pred_folder=pred_folder,
+                                 label_version_pred=label_version_pred)
+        input_csv = output_csv
+        output_xlsx = r'H:\commonFunc_3D\application\PTV3_dataprocess/评价结果'+data_version+'_2可视.xlsx'
+        columns_dict = {
+            "点云统计": [
+                "点云数量", "background", "building", "car", "vegetation", "grass"
+            ],
+            "场景比例": [
+                "drt_background", "drt_building", "drt_car", "drt_vegetation", "drt_grass"
+            ],
+            "分组类别比例": [
+                "分组占比-总点云", "grt_background", "grt_building", "grt_car", "grt_vegetation", "grt_grass"
+            ],
+            "精度统计": [
+                "平均召回率", "平均精确率", "平均iou", "background_recall", "background_precision",
+                "background_iou", "building_recall", "building_precision", "building_iou",
+                "car_recall", "car_precision", "car_iou", "vegetation_recall", "vegetation_precision",
+                "vegetation_iou", "grass_recall", "grass_precision", "grass_iou"
+            ],
+            "混淆对比": [
+                "grass2background", "grass2vegetation", "background2grass", "vegetation2grass"
+            ],
+            "评分": ["优先级评分", "grass_混淆程度评分"]
+        }
+
+        csv_to_xlsx(input_csv, output_xlsx, columns_dict)
+
+    if False:  # 数据分析
         output_csv = r'H:\commonFunc_3D\application\PTV3_dataprocess/输出测试.csv'
         label_folder = r'J:\DATASET\BIMTwins\版本备份\多标签_动态维护版'
         pred_folder = r"H:\TempProcess\20251220数据传输\2合并标签"
@@ -581,7 +602,7 @@ if __name__ == '__main__':
         generate_scene_group_csv(output_csv, data_folder=label_folder, pred_folder=pred_folder,
                                  label_version_pred=label_version_pred)
 
-    if True:  # 数据格式优化
+    if False:  # 数据格式优化
         input_csv = r'H:\commonFunc_3D\application\PTV3_dataprocess/输出测试.csv'
         output_xlsx = r'H:\commonFunc_3D\application\PTV3_dataprocess/输出测试.xlsx'
 #         columns_dict = {
