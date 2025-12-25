@@ -512,6 +512,12 @@ def csv_to_xlsx(csv_path, xlsx_path=None, columns_dict=None):
         # 冻结前两列和第一行
         worksheet.freeze_panes = "C2"
 
+        # 设置列宽
+        for col in worksheet.columns:
+            column_letter = col[0].column_letter
+            if col[0].value == '场景名':
+                worksheet.column_dimensions[column_letter].width = 22.5
+
     print(f"\nXLSX文件已保存到: {xlsx_path}")
 
 
