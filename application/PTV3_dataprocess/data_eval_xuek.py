@@ -297,8 +297,23 @@ def csv_to_xlsx(csv_path, xlsx_path=None):
         worksheet = writer.sheets['Sheet1']
 
         # 导入样式模块
-        from openpyxl.styles import Font, PatternFill
+        from openpyxl.styles import Font, PatternFill, Border, Side
         from openpyxl.styles.numbers import FORMAT_PERCENTAGE_00
+
+        # 定义属性组
+        attribute_groups = {
+            '点云统计': ['点云数量', 'background', 'building', 'car', 'vegetation', 'grass'],
+            '场景比例': ['数据占比', 'drt_background', 'drt_building', 'drt_car', 'drt_vegetation', 'drt_grass'],
+            '分组类别比例': ['分组占比-总点云', 'grt_background', 'grt_building', 'grt_car', 'grt_vegetation', 'grt_grass'],
+            '精度统计': ['平均召回率', '平均精确率', '平均iou',
+                         'background_recall', 'background_precision', 'background_iou',
+                         'building_recall', 'building_precision', 'building_iou',
+                         'car_recall', 'car_precision', 'car_iou',
+                         'vegetation_recall', 'vegetation_precision', 'vegetation_iou',
+                         'grass_recall', 'grass_precision', 'grass_iou'],
+            '混淆对比': ['grass2background', 'grass2vegetation', 'background2grass', 'vegetation2grass'],
+            '评分': ['优先级评分', 'grass_混淆程度评分']
+        }
 
         # 定义标题填充色
         color_map = {
@@ -352,11 +367,39 @@ def csv_to_xlsx(csv_path, xlsx_path=None):
             'grass_混淆程度评分': 'CFE2F3',
         }
 
-        # 设置标题行加粗和填充色
+        # 定义边框样式（黑色细边框）
+        left_border = Border(left=Side(style='thin', color='000000'))
+        right_border = Border(right=Side(style='thin', color='000000'))
+
+        # 获取每个属性组的第一列和最后一列
+        group_first_columns = set()  # 需要左边框的列
+        group_last_columns = set()   # 需要右边框的列
+        for group_name, columns in attribute_groups.items():
+            group_first_columns.add(columns[0])  # 第一列
+            group_last_columns.add(columns[-1])   # 最后一列
+
+        # 设置标题行加粗和填充色，以及属性组边框
         for cell in worksheet[1]:  # 第一行是标题
             cell.font = Font(bold=True)
             if cell.value in color_map:
                 cell.fill = PatternFill(start_color=color_map[cell.value], end_color=color_map[cell.value], fill_type='solid')
+            # 设置属性组左边框
+            if cell.value in group_first_columns:
+                cell.border = left_border
+            # 设置属性组右边框
+            elif cell.value in group_last_columns:
+                cell.border = right_border
+
+        # 为所有数据行设置属性组边框
+        for row in worksheet.iter_rows(min_row=2):
+            for cell in row:
+                column_name = worksheet.cell(1, cell.column).value
+                # 设置属性组左边框
+                if column_name in group_first_columns:
+                    cell.border = left_border
+                # 设置属性组右边框
+                elif column_name in group_last_columns:
+                    cell.border = right_border
 
         # 设置百分比列的格式
         for row in worksheet.iter_rows(min_row=2):  # 从第二行开始（数据行）
