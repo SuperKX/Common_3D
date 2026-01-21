@@ -18,6 +18,10 @@ class LabelRegistry:
             0: "background", 1: "building", 2: "car", 3: "vegetation",
             4: "grass"
         },
+        'label05_V2': {
+            0: "background", 1: "building", 2: "car", 3: "vegetation",
+            4: "farmland"
+        },
         'label04_V1': {
             0: "background", 1: "building", 2: "vegetation", 3: "farmland"
         }
@@ -51,6 +55,12 @@ class LabelRegistry:
             1: [1],
             2: [3],
             3: [2]
+        },
+        'label05_V1_to_label05_V2': {
+            0: [0, 4],
+            1: [1],
+            2: [2],
+            3: [3]
         }
     }
 

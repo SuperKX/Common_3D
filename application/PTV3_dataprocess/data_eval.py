@@ -1,1162 +1,652 @@
-'''
-评估训练数据质量
-'''
-import copy
-import os
-import sys
-import torch
-import json
+import pandas as pd
 import numpy as np
-import path.path_process as path_process
+import os
+# 导入data_dict和label_dict
+from application.PTV3_dataprocess import data_dict, label_dict
+import points.points_io as points_io
 import points.points_eval as points_eval
-import data_dict
 
-# 将字符串控制台输出并写出到文件
-def PW(text, file_path):
-    print(text)
-    with open(file_path, 'a') as f:
-        f.write(text + '\n')
-
-# 1 评估训练数据质量
-def eval_train_data(data_folder, output_json=None):  #, data_dict, label_version
+def generate_scene_group_csv(output_csv=None, data_version=None, data_folder=None, label_version='label05_V1',
+                             pred_folder=None, label_version_pred='label05_V1'):
     '''
-    评估训练数据：
-        数据输出指标
-        可能问题分析
-        数据需要符合那些指标来保证
-    参考信息： 场景分布、训练验证集分布、点云比例分布
-    功能：
-        1、当前只处理pth评估。 TODO:兼容 pth、ply文件
-        2、    TODO： 当前写死类别，后续开放
-
-    '''
-    print("当前对点云分割数据进行评估，总共标注类别有5类")
-    print("当前处理的文件为 pth 数据")
-
-    # 初始化数据结构，按照JSON格式
-    result = {
-        "元数据": {
-            "生成时间": "",
-            "数据说明": {
-                "总体说明": "本文件统计了点云分割数据集的分布信息，包括全局统计、各分组统计以及场景级详细信息。",
-                "层级说明": {
-                    "全局级别": "统计所有数据集的汇总信息",
-                    "分组级别": "分别统计train/val/test三个分组的信息",
-                    "场景级别": "统计每个场景的详细信息"
-                },
-                "指标含义": {
-                    "场景数量": "包含的场景文件总数",
-                    "点云数量": "该层级包含的所有点云总数",
-                    "类别点云数量": "某个类别（如背景、建筑）的点云数量",
-                    "占总点云比例": "类别点云数量 / 全局总点云数量",
-                    "占分组比例": "类别点云数量 / 该分组（train/val/test）总点云数量",
-                    "占场景比例": "类别点云数量 / 该场景总点云数量",
-                    "场景占全局比例": "场景点云数量 / 全局总点云数量",
-                    "场景占分组比例": "场景点云数量 / 所在分组（train/val/test）总点云数量",
-                    "子类分布": {
-                        "说明": "某个类别中子类别的分布情况",
-                        "计算规则": {
-                            "场景级别": "存在的子类别平均分配（例如：同时存在平坦和斜坡，则各占50%）",
-                            "数据集级别": "子类实际数量占比（子类点云数 / 该类别所有子类点云总数）",
-                            "全局级别": "子类实际数量占比（子类点云数 / 该类别所有子类点云总数）"
-                        }
-                    }
-                },
-                "类别定义": {
-                    "背景类": "包含平坦、斜坡等地面类型",
-                    "建筑类": "包含高楼、民房、临建等建筑类型",
-                    "车辆类": "包含普通汽车、工程汽车等车辆类型",
-                    "高植被类": "树木等高大植被",
-                    "低植被类": "草地、灌木等低矮植被"
-                }
-            }
-        },
-        "全局统计": {
-            "场景数量": 0,
-            "总点云数量": 0,
-            "各类别统计": {}
-        },
-        "数据集分布": {}
-    }
-
-    # 类别名称映射
-    label_names = {
-        0: "背景类",
-        1: "建筑类",
-        2: "车辆类",
-        3: "高植被类",
-        4: "低植被类"
-    }
-
-    # 子类别名称映射
-    sublabel_names = {
-        "平坦": "平坦",
-        "斜坡": "斜坡",
-        "高楼": "高楼",
-        "民房": "民房",
-        "临建": "临建",
-        "普通汽车": "普通汽车",
-        "工程汽车": "工程汽车"
-    }
-
-    # 1 点云信息
-    sub_folders = ['train', 'val', 'test']
-    global_total_points = 0
-    global_total_scenes = 0
-    global_category_info = {}
-
-    # 存储每个场景的点云数量，用于后续计算比例
-    scene_points_info = {}  # 格式: {sub_folder: {scene_name: pts_num}}
-
-    # 初始化全局类别统计
-    for label_id in label_names:
-        global_category_info[label_names[label_id]] = {
-            "类别点云数量": 0,
-            "占总点云比例": 0.0,
-            "子类分布": {}
-        }
-        # 添加子类别字段
-        if label_id == 0:  # 背景
-            global_category_info[label_names[label_id]]["子类分布"]["平坦"] = 0.0
-            global_category_info[label_names[label_id]]["子类分布"]["斜坡"] = 0.0
-        elif label_id == 1:  # 建筑
-            global_category_info[label_names[label_id]]["子类分布"]["高楼"] = 0.0
-            global_category_info[label_names[label_id]]["子类分布"]["民房"] = 0.0
-            global_category_info[label_names[label_id]]["子类分布"]["临建"] = 0.0
-        elif label_id == 2:  # 车辆
-            global_category_info[label_names[label_id]]["子类分布"]["普通汽车"] = 0.0
-            global_category_info[label_names[label_id]]["子类分布"]["工程汽车"] = 0.0
-
-    for sub_folder in sub_folders:
-        sub_folder_path = os.path.join(data_folder, sub_folder)
-        if not os.path.exists(sub_folder_path):
-            continue
-
-        # 初始化数据集信息
-        result["数据集分布"][sub_folder] = {
-            "分组统计": {
-                "场景数量": 0,
-                "分组总点云": 0,
-                "各类别统计": copy.deepcopy(global_category_info)
-            },
-            "场景详情": {}
-        }
-
-        dataset_total_points = 0
-        dataset_scene_count = 0
-        dataset_category_info = {}
-        scene_points_info[sub_folder] = {}  # 初始化该数据集的场景点云数量字典
-
-        # 初始化数据集类别统计
-        for label_id in label_names:
-            dataset_category_info[label_names[label_id]] = {
-                "类别点云数量": 0,
-                "占分组比例": 0.0,
-                "子类分布": {}
-            }
-            # 添加子类别字段
-            if label_id == 0:  # 背景
-                dataset_category_info[label_names[label_id]]["子类分布"]["平坦"] = 0.0
-                dataset_category_info[label_names[label_id]]["子类分布"]["斜坡"] = 0.0
-            elif label_id == 1:  # 建筑
-                dataset_category_info[label_names[label_id]]["子类分布"]["高楼"] = 0.0
-                dataset_category_info[label_names[label_id]]["子类分布"]["民房"] = 0.0
-                dataset_category_info[label_names[label_id]]["子类分布"]["临建"] = 0.0
-            elif label_id == 2:  # 车辆
-                dataset_category_info[label_names[label_id]]["子类分布"]["普通汽车"] = 0.0
-                dataset_category_info[label_names[label_id]]["子类分布"]["工程汽车"] = 0.0
-
-        filelist = path_process.get_files_by_format(sub_folder_path, formats=['.pth'], return_full_path=False)
-
-        for file in filelist:
-            scenei_info = dict()
-            # 获取文件名并去除_1216后缀
-            file_name_raw = os.path.splitext(file)[0]
-            if file_name_raw.endswith('_1216'):
-                file_name = file_name_raw[:-5]  # 去掉最后的_1216
-            else:
-                file_name = file_name_raw
-
-            file_path = os.path.join(sub_folder_path, file)
-            print(f"处理文件: {file_name_raw} -> {file_name}")
-            pth_info = torch.load(file_path)
-            label = pth_info['semantic_gt20']
-            scenei_info['pts_num'] = label.size
-            scenei_info['labels'] = points_eval.label_rate(label)
-
-            # 计算子类别占比
-            scenei_info_with_sublabels = calculate_sublabel_ratio(scenei_info, file_name)
-
-            # 更新数据集统计
-            dataset_scene_count += 1
-            dataset_total_points += scenei_info['pts_num']
-
-            # 场景信息
-            scene_category_info = {}
-
-            # 计算场景在全局和数据集中的比例
-            scene_pts_num = scenei_info['pts_num']
-
-            # 存储场景点云数量
-            scene_points_info[sub_folder][file_name] = scene_pts_num
-
-            for label_id, label_info in scenei_info_with_sublabels['labels'].items():
-                category_name = label_names.get(label_id, f"类别{label_id}")
-
-                # 更新数据集类别统计
-                dataset_category_info[category_name]["类别点云数量"] += label_info['数量']
-
-                # 更新场景类别信息
-                scene_category_info[category_name] = {
-                    "类别点云数量": label_info['数量'],
-                    "占场景比例": label_info['比例'],
-                    "子类分布": {}
-                }
-
-                # 添加子类别信息
-                # 收集该类别的所有子类别
-                subcategories = []
-                for key in label_info:
-                    if key not in ['数量', '比例']:
-                        subcategories.append(key)
-
-                # 计算子类别在父类中的占比（平均分配）
-                if len(subcategories) > 0:
-                    sub_ratio = 1.0 / len(subcategories)
-                    for sub in subcategories:
-                        # 场景级别：子类别占父类的比例
-                        scene_category_info[category_name]["子类分布"][sub] = sub_ratio
-
-                        # 数据集级别：累计子类别数量
-                        if sub in dataset_category_info[category_name]["子类分布"]:
-                            dataset_category_info[category_name]["子类分布"][sub] += label_info[sub]
-
-            # 创建场景信息字典，包含点云数量和类别统计
-            scene_info = {
-                "场景点云数量": scene_pts_num,
-                "各类别统计": scene_category_info
-            }
-
-            # 添加场景信息到结果
-            result["数据集分布"][sub_folder]["场景详情"][file_name] = scene_info
-
-            # 输出子类别信息
-            print(f"  子类别分布信息:")
-            for label_id, label_info in scenei_info_with_sublabels['labels'].items():
-                info_str = f"    标签{label_id}: 数量={label_info['数量']}, 比例={label_info['比例']:.2%}"
-                # 添加子类别信息
-                for key, value in label_info.items():
-                    if key not in ['数量', '比例']:
-                        info_str += f", {key}={value:.0f}"
-                print(info_str)
-
-        # 更新数据集信息
-        result["数据集分布"][sub_folder]["分组统计"]["场景数量"] = dataset_scene_count
-        result["数据集分布"][sub_folder]["分组统计"]["分组总点云"] = dataset_total_points
-
-        # 计算数据集类别占比
-        for category_name in dataset_category_info:
-            if dataset_total_points > 0:
-                dataset_category_info[category_name]["占分组比例"] = dataset_category_info[category_name]["类别点云数量"] / dataset_total_points
-
-            # 计算子类别占比（子类别在父类中的占比）
-            parent_count = dataset_category_info[category_name]["类别点云数量"]
-            if parent_count > 0 and "子类分布" in dataset_category_info[category_name]:
-                # 首先统计所有子类别的总数
-                total_sub_count = 0
-                for sub in dataset_category_info[category_name]["子类分布"]:
-                    total_sub_count += dataset_category_info[category_name]["子类分布"][sub]
-
-                # 然后计算每个子类别在父类中的占比（总和为1）
-                if total_sub_count > 0:
-                    for sub in dataset_category_info[category_name]["子类分布"]:
-                        dataset_category_info[category_name]["子类分布"][sub] = dataset_category_info[category_name]["子类分布"][sub] / total_sub_count
-
-        result["数据集分布"][sub_folder]["分组统计"]["各类别统计"] = dataset_category_info
-
-        # 更新全局统计
-        global_total_scenes += dataset_scene_count
-        global_total_points += dataset_total_points
-
-        for category_name in global_category_info:
-            global_category_info[category_name]["类别点云数量"] += dataset_category_info[category_name]["类别点云数量"]
-
-            # 累计子类别数量
-            if "子类分布" in global_category_info[category_name] and "子类分布" in dataset_category_info[category_name]:
-                for sub in global_category_info[category_name]["子类分布"]:
-                    if sub in dataset_category_info[category_name]["子类分布"]:
-                        global_category_info[category_name]["子类分布"][sub] += dataset_category_info[category_name]["子类分布"][sub]
-
-    # 添加生成时间到元数据
-    import datetime
-    result["元数据"]["生成时间"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    # 更新全局信息
-    result["全局统计"]["场景数量"] = global_total_scenes
-    result["全局统计"]["总点云数量"] = global_total_points
-
-    # 计算全局类别占比
-    for category_name in global_category_info:
-        if global_total_points > 0:
-            global_category_info[category_name]["占总点云比例"] = global_category_info[category_name]["类别点云数量"] / global_total_points
-
-        # 计算子类别占比（子类别在父类中的占比）
-        parent_count = global_category_info[category_name]["类别点云数量"]
-        if parent_count > 0 and "子类分布" in global_category_info[category_name]:
-            # 首先统计所有子类别的总数
-            total_sub_count = 0
-            for sub in global_category_info[category_name]["子类分布"]:
-                total_sub_count += global_category_info[category_name]["子类分布"][sub]
-
-            # 然后计算每个子类别在父类中的占比（总和为1）
-            if total_sub_count > 0:
-                for sub in global_category_info[category_name]["子类分布"]:
-                    global_category_info[category_name]["子类分布"][sub] = global_category_info[category_name]["子类分布"][sub] / total_sub_count
-
-    result["全局统计"]["各类别统计"] = global_category_info
-
-    # 为每个场景添加在全局和所在数据集的比例
-    for sub_folder in sub_folders:
-        if sub_folder in result["数据集分布"] and "场景详情" in result["数据集分布"][sub_folder]:
-            # 获取该数据集的总点云数
-            dataset_total = result["数据集分布"][sub_folder]["分组统计"]["分组总点云"]
-
-            for scene_name, scene_info in result["数据集分布"][sub_folder]["场景详情"].items():
-                # 添加场景在全局和数据集中的比例
-                scene_pts = scene_info["场景点云数量"]
-
-                # 计算比例
-                global_ratio = scene_pts / global_total_points if global_total_points > 0 else 0.0
-                dataset_ratio = scene_pts / dataset_total if dataset_total > 0 else 0.0
-
-                # 添加到场景信息中
-                scene_info["场景占全局比例"] = global_ratio
-                scene_info["场景占分组比例"] = dataset_ratio
-
-    # 转换numpy类型为Python原生类型
-    def convert_numpy(obj):
-        if isinstance(obj, dict):
-            return {k: convert_numpy(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [convert_numpy(v) for v in obj]
-        elif isinstance(obj, (np.integer, np.int64, np.int32)):
-            return int(obj)
-        elif isinstance(obj, (np.floating, np.float64, np.float32)):
-            return float(obj)
-        else:
-            return obj
-
-    # 输出JSON结果
-    if output_json:
-        # 转换numpy类型
-        result_converted = convert_numpy(result)
-
-        with open(output_json, 'w', encoding='utf-8') as f:
-            json.dump(result_converted, f, ensure_ascii=False, indent=4)
-        print(f"结果已保存到: {output_json}")
-
-    return result
-
-
-
-        # 2 评估推理结果问题
-
-
-# 评估两个PLY文件的标签对比
-def eval_two_ply_files(ply_file1, ply_file2, label_name1, label_name2, output_json=None, class_num=5):
-    '''
-    评估两个PLY文件的标签对比，计算混淆矩阵和精度指标
-
+    根据data_dict.py中的data_version20240905创建场景分组CSV表格
+    todo： 输入改成两个标签值的方式。外部套壳，支持单文件、多文件输入。
     参数:
-        ply_file1: 第一个PLY文件路径
-        ply_file2: 第二个PLY文件路径
-        label_name1: 第一个文件的标签字段名
-        label_name2: 第二个文件的标签字段名
-        output_json: 输出JSON文件路径（可选）
-        class_num: 类别数量（默认为5）
+        output_csv: 输出CSV文件路径（可选）
+        data_version: 数据版本字典（可选，默认使用data_version20240905）
+        data_folder: 数据文件夹路径（可选，用于统计点云数量）
+        label_version: 标签版本（可选，默认使用label05_V1）
+        pred_folder: 推理输出数据文件夹路径（可选，用于计算评估指标）
+        label_version_pred: 推理数据标签版本（可选，默认使用label05_V1）
 
     返回:
-        包含评估结果的字典
+        DataFrame包含分组和场景名信息，以及点云数量统计（如果提供data_folder）
+        和评估指标（如果提供pred_folder）
     '''
-    import points.points_eval as points_eval
-    import points.points_io as points_io
-    import datetime
+    # 如果没有指定data_version，使用默认版本
+    if data_version is None:
+        data_version = data_dict.data_version20240905
 
-    print(f"\n开始评估两个PLY文件:")
-    print(f"文件1: {ply_file1}, 标签字段: {label_name1}")
-    print(f"文件2: {ply_file2}, 标签字段: {label_name2}")
+    # 获取标签定义
+    if label_version in label_dict.LabelRegistry.label_def:
+        label_def = label_dict.LabelRegistry.label_def[label_version]
+        # 根据标签定义生成类别列名
+        category_columns = [label_def[i] for i in sorted(label_def.keys())]
+        class_num = len(label_def)
+    else:
+        raise ValueError(f"未找到标签版本: {label_version}")
 
-    # 读取第一个文件的标签
-    points_dict1 = points_io.parse_cloud_to_dict(ply_file1)
-    if label_name1 not in points_dict1:
-        raise ValueError(f'文件1没有找到标签字段 {label_name1}：{ply_file1}')
-    labels1 = points_dict1[label_name1]
-    print(f"文件1标签数量: {len(labels1)}")
+    print(f"\n生成场景分组CSV表格...")
+    print(f"数据版本: data_version20240905")
+    print(f"标签版本: {label_version}")
+    if data_folder:
+        print(f"数据文件夹: {data_folder}")
+    if pred_folder:
+        print(f"推理文件夹: {pred_folder}")
+        print(f"推理标签版本: {label_version_pred}")
 
-    # 读取第二个文件的标签
-    points_dict2 = points_io.parse_cloud_to_dict(ply_file2)
-    if label_name2 not in points_dict2:
-        raise ValueError(f'文件2没有找到标签字段 {label_name2}：{ply_file2}')
-    labels2 = points_dict2[label_name2]
-    print(f"文件2标签数量: {len(labels2)}")
+    # 存储所有数据
+    all_data = []
 
-    # 检查标签数量是否一致
-    if len(labels1) != len(labels2):
-        print(f"警告：两个文件的标签数量不一致！文件1: {len(labels1)}, 文件2: {len(labels2)}")
-        # 取最小长度进行比较
-        min_len = min(len(labels1), len(labels2))
-        labels1 = labels1[:min_len]
-        labels2 = labels2[:min_len]
-        print(f"截取前 {min_len} 个点进行比较")
+    # 各类别数量统计
+    class_sum = {'train':{}, 'val':{}, 'test':{}}
+    for cat_name in category_columns:
+        class_sum['train'][cat_name] = 0
+        class_sum['val'][cat_name] = 0
+        class_sum['test'][cat_name] = 0
+    class_sum['train']['分组点云总数'] = 0
+    class_sum['val']['分组点云总数'] = 0
+    class_sum['test']['分组点云总数'] = 0
 
-    # 确保标签是numpy数组
-    if not isinstance(labels1, np.ndarray):
-        labels1 = np.array(labels1)
-    if not isinstance(labels2, np.ndarray):
-        labels2 = np.array(labels2)
 
-    # 打印标签的基本统计信息
-    print(f"\n标签统计信息:")
-    print(f"文件1 - 标签范围: {labels1.min()} 到 {labels1.max()}")
-    print(f"文件2 - 标签范围: {labels2.min()} 到 {labels2.max()}")
+    # points_num_class = {}
+    # label_def
 
-    # 统计每个类别的数量
-    unique1, counts1 = np.unique(labels1, return_counts=True)
-    unique2, counts2 = np.unique(labels2, return_counts=True)
-    print(f"\n文件1标签分布:")
-    for u, c in zip(unique1, counts1):
-        print(f"  类别 {u}: {c} 个点")
-    print(f"\n文件2标签分布:")
-    for u, c in zip(unique2, counts2):
-        print(f"  类别 {u}: {c} 个点")
-
-    # 计算混淆矩阵
-    confusion_matrix = points_eval.label_eval(labels1, labels2, class_num)
-
-    # 计算各项指标
-    recall, precision, iou = points_eval.eval_result(confusion_matrix, class_num)
-
-    # 类别名称映射
-    label_names = {
-        0: "背景类",
-        1: "建筑类",
-        2: "车辆类",
-        3: "高植被类",
-        4: "低植被类"
-    }
-
-    # 构建结果字典
-    result = {
-        "元数据": {
-            "评估时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "评估说明": {
-                "目的": "比较两个PLY文件的标签差异",
-                "文件1": {
-                    "路径": ply_file1,
-                    "标签字段": label_name1,
-                    "文件名": os.path.basename(ply_file1)
-                },
-                "文件2": {
-                    "路径": ply_file2,
-                    "标签字段": label_name2,
-                    "文件名": os.path.basename(ply_file2)
-                },
-                "类别数量": class_num,
-                "指标说明": {
-                    "召回率(Recall)": "真正例/(真正例+假负例) - 检出率",
-                    "精确率(Precision)": "真正例/(真正例+假正例) - 查准率",
-                    "IoU": "交并比 - 交集中面积/并集面积"
-                }
+    # 1 遍历每个分组
+    for group_name, scene_set in data_version.items():
+        # 遍历该分组中的每个场景
+        for scene_name in scene_set:
+            # 1.1 场景基本信息
+            row_data = {
+                '分组': group_name,
+                '场景名': scene_name
             }
-        },
-        "混淆矩阵": {
-            "说明": "行代表真实标签(文件1)，列代表预测标签(文件2)",
-            "矩阵": confusion_matrix.tolist(),
-            "类别顺序": [f"{i}:{label_names.get(i, f'类别{i}')}" for i in range(class_num)]
-        },
-        "详细指标": {},
-        "平均指标": {
-            "平均召回率": float(np.mean(recall)),
-            "平均精确率": float(np.mean(precision)),
-            "平均IoU": float(np.mean(iou))
-        }
-    }
+            if data_folder:  # 如果提供了数据文件夹，统计点云数量
+                ply_path = os.path.join(data_folder, f"{scene_name}.ply")
 
-    # 添加各类别的详细指标
-    for i in range(class_num):
-        class_name = label_names.get(i, f"类别{i}")
-        result["详细指标"][class_name] = {
-            "类别ID": i,
-            "召回率": float(recall[i]),
-            "精确率": float(precision[i]),
-            "IoU": float(iou[i])
-        }
+                if not os.path.exists(ply_path):
+                    raise FileNotFoundError(f"未找到点云文件 {ply_path}")
+                points_dict = points_io.parse_cloud_to_dict(ply_path)
+                label_version_plystyle = 'label_' + label_version  # ply 文件前缀
+                if not label_version_plystyle in points_dict:
+                    raise ValueError(f"{scene_name}.ply 中没有{label_version}标签信息")
+                labels = points_dict[label_version_plystyle]
+                # points_num_info = points_eval.file_label_info(ply_path, label_version)
 
-    # 输出结果到控制台
-    print("\n评估结果:")
-    print("=" * 60)
-    for i in range(class_num):
-        class_name = label_names.get(i, f"类别{i}")
-        print(f"{class_name:8s}: Recall={recall[i]:.2%}, Precision={precision[i]:.2%}, IoU={iou[i]:.2%}")
-    print("-" * 60)
-    print(f"{'平均':8s}: Recall={np.mean(recall):.2%}, Precision={np.mean(precision):.2%}, IoU={np.mean(iou):.2%}")
+                # 1.2 点云数量
+                row_data['点云数量'] = len(labels)
+                label_counts = {}
+                for label_id, label_name in label_def.items():
+                    count = np.sum(labels == label_id)
+                    label_counts[label_name] = count
+                for cat_name in category_columns:  # 类别数量
+                    row_data[cat_name] = label_counts.get(cat_name, 0)
+                    class_sum[group_name][cat_name] += row_data[cat_name]   # 各类别数量占比
+                # 1.3 点云内数据占比
+                row_data['数据占比'] = 1
+                for cat_name in category_columns:  # 类别比例
+                    row_data['drt_'+cat_name] = row_data[cat_name]/row_data['点云数量']
 
-    # 输出JSON文件
-    if output_json:
-        # 转换numpy类型
-        def convert_numpy(obj):
-            if isinstance(obj, dict):
-                return {k: convert_numpy(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [convert_numpy(v) for v in obj]
-            elif isinstance(obj, (np.integer, np.int64, np.int32)):
-                return int(obj)
-            elif isinstance(obj, (np.floating, np.float64, np.float32)):
-                return float(obj)
+            all_data.append(row_data)
+    # 1.4 计算分组内类别比例
+    for cat_name in category_columns:
+        class_sum['train']['分组点云总数'] += class_sum['train'][cat_name]
+        class_sum['val']['分组点云总数'] += class_sum['val'][cat_name]
+        class_sum['test']['分组点云总数'] += class_sum['test'][cat_name]
+    for data_row in all_data:
+        data_row['分组占比-总点云'] = data_row['点云数量']/class_sum[data_row['分组']]['分组点云总数']
+        for cat_name in category_columns:
+            data_row['grt_' + cat_name] = data_row[cat_name] / class_sum[data_row['分组']][cat_name]
+
+    # 1.5 如果提供了推理文件夹，计算评估指标
+    if pred_folder:
+        for data_row in all_data:
+            scene_name = data_row['场景名']
+            label_path = os.path.join(data_folder, f"{scene_name}.ply")
+            pred_path = os.path.join(pred_folder, f"{scene_name}.ply")
+
+            if not os.path.exists(pred_path):
+                print(f"警告: 未找到推理文件 {pred_path}，跳过评估")
+                data_row['平均召回率'] = np.nan
+                data_row['平均精确率'] = np.nan
+                data_row['平均iou'] = np.nan
+                # 各类别指标设为NaN
+                for cat_name in category_columns:
+                    data_row[f'{cat_name}_recall'] = np.nan
+                    data_row[f'{cat_name}_precision'] = np.nan
+                    data_row[f'{cat_name}_iou'] = np.nan
+                # grass混淆度设为NaN
+                data_row['grass2background'] = np.nan
+                data_row['grass2vegetation'] = np.nan
+                data_row['background2grass'] = np.nan
+                data_row['vegetation2grass'] = np.nan
+                # grass优先级评分设为NaN
+                data_row['优先级评分'] = np.nan
+                data_row['grass_混淆程度评分'] = np.nan
             else:
-                return obj
-
-        result_converted = convert_numpy(result)
-
-        with open(output_json, 'w', encoding='utf-8') as f:
-            json.dump(result_converted, f, ensure_ascii=False, indent=4)
-        print(f"\n评估结果已保存到: {output_json}")
-
-    return result
-
-
-# 批量评估两个文件夹下的PLY文件对比
-def eval_ply_folder_comparison(folder1, folder2, label_name1, label_name2, output_json=None, class_num=5, formats=['.ply']):
-    '''
-    批量比较两个文件夹下同名PLY文件的标签差异
-
-    参数:
-        folder1: 第一个文件夹路径
-        folder2: 第二个文件夹路径
-        label_name1: 第一个文件夹文件的标签字段名
-        label_name2: 第二个文件夹文件的标签字段名
-        output_json: 输出JSON文件路径（可选）
-        class_num: 类别数量（默认为5）
-        formats: 支持的文件格式列表
-
-    返回:
-        包含所有文件评估结果的字典
-    '''
-    import points.points_eval as points_eval
-    import points.points_io as points_io
-    import datetime
-    import path.path_process as path_process
-
-    print(f"\n开始批量评估两个文件夹的PLY文件:")
-    print(f"文件夹1: {folder1}, 标签字段: {label_name1}")
-    print(f"文件夹2: {folder2}, 标签字段: {label_name2}")
-
-    # 获取两个文件夹的文件列表
-    files1 = path_process.get_files_by_format(folder1, formats, return_full_path=False)
-    files2 = path_process.get_files_by_format(folder2, formats, return_full_path=True)
-
-    # 创建文件名到完整路径的映射
-    file2_path_map = {}
-    for file_path in files2:
-        filename = os.path.basename(file_path)
-        file2_path_map[filename] = file_path
-
-    # 统计结果
-    all_results = {
-        "元数据": {
-            "评估时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "评估说明": {
-                "目的": "批量比较两个文件夹下同名PLY文件的标签差异",
-                "文件夹1": {
-                    "路径": folder1,
-                    "文件数量": len(files1),
-                    "标签字段": label_name1
-                },
-                "文件夹2": {
-                    "路径": folder2,
-                    "文件数量": len(files2),
-                    "标签字段": label_name2
-                },
-                "类别数量": class_num,
-                "指标说明": {
-                    "召回率(Recall)": "真正例/(真正例+假负例) - 检出率",
-                    "精确率(Precision)": "真正例/(真正例+假正例) - 查准率",
-                    "IoU": "交并比 - 交集中面积/并集面积"
-                }
-            }
-        },
-        "文件对比结果": {},
-        "汇总统计": {
-            "成功对比的文件数": 0,
-            "失败的文件数": 0,
-            "平均召回率": 0.0,
-            "平均精确率": 0.0,
-            "平均IoU": 0.0,
-            "各类别平均指标": {}
-        }
-    }
-
-    # 类别名称映射
-    label_names = {
-        0: "背景类",
-        1: "建筑类",
-        2: "车辆类",
-        3: "高植被类",
-        4: "低植被类"
-    }
-
-    # 初始化各类别累计指标
-    total_recall = np.zeros(class_num)
-    total_precision = np.zeros(class_num)
-    total_iou = np.zeros(class_num)
-    valid_files = 0
-
-    # 遍历文件夹1中的文件
-    for filename in files1:
-        # 尝试多种匹配方式
-        file2_path = None
-        matched_file2_name = None
-
-        # 获取文件夹1文件的基本名称（不带扩展名）
-        base_name = os.path.splitext(filename)[0]
-
-        # 在文件夹2的所有文件中搜索匹配的文件
-        for file2_name, file2_full_path in file2_path_map.items():
-            # 如果文件夹2的文件名包含文件夹1的基本名称，则认为匹配
-            if base_name in file2_name:
-                file2_path = file2_full_path
-                matched_file2_name = file2_name
-                print(f"  找到匹配文件: {filename} <-> {file2_name}")
-                break
-
-        if file2_path:
-            file1_path = os.path.join(folder1, filename)
-
-            try:
-                print(f"\n处理文件: {filename}")
-
-                # 读取第一个文件的标签
-                points_dict1 = points_io.parse_cloud_to_dict(file1_path)
-                if label_name1 not in points_dict1:
-                    print(f"  警告：文件1没有找到标签字段 {label_name1}，跳过")
-                    continue
-                labels1 = points_dict1[label_name1]
-
-                # 读取第二个文件的标签
-                points_dict2 = points_io.parse_cloud_to_dict(file2_path)
-                if label_name2 not in points_dict2:
-                    print(f"  警告：文件2没有找到标签字段 {label_name2}，跳过")
-                    continue
-                labels2 = points_dict2[label_name2]
-
-                # 检查标签数量是否一致
-                if len(labels1) != len(labels2):
-                    print(f"  警告：标签数量不一致！文件1: {len(labels1)}, 文件2: {len(labels2)}")
-                    min_len = min(len(labels1), len(labels2))
-                    labels1 = labels1[:min_len]
-                    labels2 = labels2[:min_len]
-                    print(f"  截取前 {min_len} 个点进行比较")
-
-                # 确保标签是numpy数组
-                if not isinstance(labels1, np.ndarray):
-                    labels1 = np.array(labels1)
-                if not isinstance(labels2, np.ndarray):
-                    labels2 = np.array(labels2)
+                # 读取标签数据
+                labeled_dict = points_io.parse_cloud_to_dict(label_path)
+                label_version_plystyle = 'label_' + label_version
+                if not label_version_plystyle in labeled_dict:
+                    raise ValueError(f"{scene_name}.ply 中没有{label_version}标签信息")
+                labels = labeled_dict[label_version_plystyle]
+                # 读取推理数据
+                pred_dict = points_io.parse_cloud_to_dict(pred_path)
+                label_version_pred_plystyle = 'label_' + label_version_pred
+                if not label_version_pred_plystyle in pred_dict:
+                    raise ValueError(f"{scene_name}.ply 中没有{label_version_pred}标签信息")
+                labels_pred = pred_dict[label_version_pred_plystyle]
 
                 # 计算混淆矩阵
-                confusion_matrix = points_eval.label_eval(labels1, labels2, class_num)
+                score_matrix = points_eval.matrix_eval(labels, labels_pred, class_num)
+                # 保存混淆矩阵到data_row，用于后续汇总
+                data_row['_score_matrix'] = score_matrix
 
-                # 计算各项指标
-                recall, precision, iou = points_eval.eval_result(confusion_matrix, class_num)
+                # 计算评估指标
+                score_rec, score_pre, score_iou = points_eval.eval_result(score_matrix, class_num)
 
-                # 保存单文件结果
-                file_result = {
-                    "文件1": {
-                        "文件名": filename,
-                        "完整路径": file1_path
-                    },
-                    "文件2": {
-                        "文件名": matched_file2_name,
-                        "完整路径": file2_path
-                    },
-                    "点云数量": len(labels1),
-                    "混淆矩阵": confusion_matrix.tolist(),
-                    "详细指标": {}
-                }
+                # 计算平均指标
+                data_row['平均召回率'] = np.mean(score_rec)
+                data_row['平均精确率'] = np.mean(score_pre)
+                data_row['平均iou'] = np.mean(score_iou)
 
-                # 添加各类别的详细指标
-                for i in range(class_num):
-                    class_name = label_names.get(i, f"类别{i}")
-                    file_result["详细指标"][class_name] = {
-                        "召回率": float(recall[i]),
-                        "精确率": float(precision[i]),
-                        "IoU": float(iou[i])
-                    }
+                # 各类别指标
+                for i, cat_name in enumerate(category_columns):
+                    data_row[f'{cat_name}_recall'] = score_rec[i]
+                    data_row[f'{cat_name}_precision'] = score_pre[i]
+                    data_row[f'{cat_name}_iou'] = score_iou[i]
 
-                all_results["文件对比结果"][filename] = file_result
+                # 1.6 混淆度计算（grass与background、vegetation的混淆比例）
+                # 获取grass、background、vegetation的标签ID
+                grass_id = background_id = vegetation_id = None
+                for label_id, label_name in label_def.items():
+                    if label_name == 'grass':
+                        grass_id = label_id
+                    elif label_name == 'background':
+                        background_id = label_id
+                    elif label_name == 'vegetation':
+                        vegetation_id = label_id
 
-                # 累计指标用于汇总统计
-                total_recall += recall
-                total_precision += precision
-                total_iou += iou
-                valid_files += 1
-
-                # 输出单文件结果
-                print(f"  平均指标: Recall={np.mean(recall):.2%}, Precision={np.mean(precision):.2%}, IoU={np.mean(iou):.2%}")
-
-            except Exception as e:
-                print(f"  错误：处理文件 {filename} 时出错 - {str(e)}")
-                all_results["汇总统计"]["失败的文件数"] += 1
-        else:
-            print(f"警告：文件夹2中没有找到文件 {filename}")
-
-    # 更新汇总统计
-    all_results["汇总统计"]["成功对比的文件数"] = valid_files
-    all_results["汇总统计"]["失败的文件数"] = len(files1) - valid_files
-
-    if valid_files > 0:
-        # 计算平均指标
-        avg_recall = total_recall / valid_files
-        avg_precision = total_precision / valid_files
-        avg_iou = total_iou / valid_files
-
-        all_results["汇总统计"]["平均召回率"] = float(np.mean(avg_recall))
-        all_results["汇总统计"]["平均精确率"] = float(np.mean(avg_precision))
-        all_results["汇总统计"]["平均IoU"] = float(np.mean(avg_iou))
-
-        # 各类别平均指标
-        for i in range(class_num):
-            class_name = label_names.get(i, f"类别{i}")
-            all_results["汇总统计"]["各类别平均指标"][class_name] = {
-                "平均召回率": float(avg_recall[i]),
-                "平均精确率": float(avg_precision[i]),
-                "平均IoU": float(avg_iou[i])
-            }
-
-    # 输出汇总结果
-    print("\n" + "="*60)
-    print("批量评估汇总:")
-    print(f"成功对比文件数: {valid_files}")
-    print(f"失败文件数: {len(files1) - valid_files}")
-    if valid_files > 0:
-        print(f"平均召回率: {all_results['汇总统计']['平均召回率']:.2%}")
-        print(f"平均精确率: {all_results['汇总统计']['平均精确率']:.2%}")
-        print(f"平均IoU: {all_results['汇总统计']['平均IoU']:.2%}")
-
-    # 输出JSON文件
-    if output_json:
-        # 转换numpy类型
-        def convert_numpy(obj):
-            if isinstance(obj, dict):
-                return {k: convert_numpy(v) for k, v in obj.items()}
-            elif isinstance(obj, list):
-                return [convert_numpy(v) for v in obj]
-            elif isinstance(obj, (np.integer, np.int64, np.int32)):
-                return int(obj)
-            elif isinstance(obj, (np.floating, np.float64, np.float32)):
-                return float(obj)
-            else:
-                return obj
-
-        result_converted = convert_numpy(all_results)
-
-        with open(output_json, 'w', encoding='utf-8') as f:
-            json.dump(result_converted, f, ensure_ascii=False, indent=4)
-        print(f"\n批量评估结果已保存到: {output_json}")
-
-    return all_results
-
-
-# 3 评估模型问题
-
-
-# 评估场景处理优先级
-def evaluate_scene_priority(data_distribution_json, ply_eval_json, output_json=None):
-    '''
-    评估场景处理优先级
-    根据点云数量和IoU计算优先级分数
-
-    参数:
-        data_distribution_json: 数据分布信息JSON文件路径
-        ply_eval_json: PLY批量评估结果JSON文件路径
-        output_json: 输出文件路径（可选）
-                     如果提供，将生成CSV表格文件和JSON详细文件
-
-    返回:
-        包含每个场景优先级分数的字典
-
-    输出:
-        - CSV文件: 表格格式，每行一个场景，每列一个类别及平均优先级
-        - JSON文件: 保留完整的评估信息和统计数据
-    '''
-    import datetime
-
-    print("\n开始评估场景处理优先级...")
-    print(f"数据分布文件: {data_distribution_json}")
-    print(f"PLY评估文件: {ply_eval_json}")
-
-    # 读取数据分布信息
-    with open(data_distribution_json, 'r', encoding='utf-8') as f:
-        data_dist = json.load(f)
-
-    # 读取PLY评估结果
-    with open(ply_eval_json, 'r', encoding='utf-8') as f:
-        ply_eval = json.load(f)
-
-    # 初始化结果字典
-    result = {
-        "元数据": {
-            "评估时间": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "评估说明": {
-                "目的": "根据点云数量和IoU评估场景处理优先级",
-                "评分规则": {
-                    "优先级计算": "点云占比 × 类别场景占比 × (1 - IoU)",
-                    "含义": "点云越多、IoU越低的场景和类别，处理优先级越高"
-                },
-                "输入文件": {
-                    "数据分布文件": data_distribution_json,
-                    "PLY评估文件": ply_eval_json
-                }
-            }
-        },
-        "场景优先级评分": {},
-        "汇总统计": {
-            "总场景数": 0,
-            "各分组统计": {
-                "train": {"场景数": 0, "平均优先级": 0.0},
-                "val": {"场景数": 0, "平均优先级": 0.0},
-                "test": {"场景数": 0, "平均优先级": 0.0}
-            },
-            "各类别优先级排行": {}
-        }
-    }
-
-    # 类别名称映射
-    class_names = {
-        0: "背景类",
-        1: "建筑类",
-        2: "车辆类",
-        3: "高植被类",
-        4: "低植被类"
-    }
-
-    # 遍历数据分布中的场景
-    total_scenes = 0
-    all_priority_scores = []
-
-    for sub_folder in ["train", "val", "test"]:
-        if sub_folder in data_dist["数据集分布"]:
-            scenes = data_dist["数据集分布"][sub_folder]["场景详情"]
-            group_total_points = data_dist["数据集分布"][sub_folder]["分组统计"]["分组总点云"]
-
-            result["汇总统计"]["各分组统计"][sub_folder]["场景数"] = len(scenes)
-            group_priorities = []
-
-            for scene_name, scene_info in scenes.items():
-                # 在PLY评估结果中查找匹配的文件
-                matched_eval = None
-                for eval_scene, eval_info in ply_eval["文件对比结果"].items():
-                    # 检查场景名称是否匹配
-                    if scene_name in eval_scene or eval_scene in scene_name:
-                        matched_eval = eval_info
-                        break
-
-                if not matched_eval:
-                    print(f"警告：未找到场景 {scene_name} 的PLY评估结果")
-                    continue
-
-                # 计算该场景的优先级分数
-                scene_pts = scene_info["场景点云数量"]
-                scene_group_ratio = scene_info["场景占分组比例"]  # 场景在该分组中的占比
-
-                # 初始化场景评分字典
-                scene_scores = {
-                    "场景基本信息": {
-                        "分组": sub_folder,
-                        "点云数量": scene_pts,
-                        "场景占分组比例": scene_group_ratio,
-                        "场景占全局比例": scene_info["场景占全局比例"]
-                    },
-                    "类别优先级分数": {},
-                    "平均优先级分数": 0.0
-                }
-
-                class_scores = []
-
-                # 遍历每个类别
-                for class_name, class_info in scene_info["各类别统计"].items():
-                    # 查找对应的IoU
-                    class_iou = 0.0
-                    if class_name in matched_eval["详细指标"]:
-                        class_iou = matched_eval["详细指标"][class_name]["IoU"]
+                if grass_id is not None and background_id is not None and vegetation_id is not None:
+                    # grass被误分类为background的比例
+                    grass_true_count = np.sum(score_matrix[grass_id, :])
+                    if grass_true_count > 0:
+                        data_row['grass2background'] = score_matrix[grass_id][background_id] / grass_true_count
                     else:
-                        print(f"警告：场景 {scene_name} 的类别 {class_name} 未找到IoU数据")
+                        data_row['grass2background'] = np.nan
 
-                    # 获取类别在场景中的占比
-                    class_scene_ratio = class_info["占场景比例"]
+                    # grass被误分类为vegetation的比例
+                    if grass_true_count > 0:
+                        data_row['grass2vegetation'] = score_matrix[grass_id][vegetation_id] / grass_true_count
+                    else:
+                        data_row['grass2vegetation'] = np.nan
 
-                    # 计算优先级分数：点云占比 × 类别场景占比 × (1 - IoU)
-                    priority_score = scene_group_ratio * class_scene_ratio * (1 - class_iou)
+                    # background被误分类为grass的比例
+                    background_true_count = np.sum(score_matrix[background_id, :])
+                    if background_true_count > 0:
+                        data_row['background2grass'] = score_matrix[background_id][grass_id] / background_true_count
+                    else:
+                        data_row['background2grass'] = np.nan
 
-                    scene_scores["类别优先级分数"][class_name] = {
-                        "类别在场景占比": class_scene_ratio,
-                        "类别IoU": class_iou,
-                        "优先级分数": priority_score
-                    }
+                    # vegetation被误分类为grass的比例
+                    vegetation_true_count = np.sum(score_matrix[vegetation_id, :])
+                    if vegetation_true_count > 0:
+                        data_row['vegetation2grass'] = score_matrix[vegetation_id][grass_id] / vegetation_true_count
+                    else:
+                        data_row['vegetation2grass'] = np.nan
 
-                    class_scores.append(priority_score)
+                # 1.7 grass优先级评分计算
+                # 获取grass的分组占比（grt_grass）和grass_iou
+                grt_grass = data_row.get('grt_grass', np.nan)
+                grass_iou = data_row.get('grass_iou', np.nan)
 
-                # 计算场景平均优先级（去掉各类别在场景中占比的影响）
-                # 即：点云占比 × 平均(1 - IoU)
-                avg_1_minus_iou = 0
-                valid_classes = 0
-                for class_name in scene_scores["类别优先级分数"]:
-                    class_iou = scene_scores["类别优先级分数"][class_name]["类别IoU"]
-                    avg_1_minus_iou += (1 - class_iou)
-                    valid_classes += 1
-
-                if valid_classes > 0:
-                    avg_1_minus_iou /= valid_classes
-                    scene_avg_priority = scene_group_ratio * avg_1_minus_iou
+                # 优先级评分 = grt_grass * (1 - grass_iou)
+                if not np.isnan(grt_grass) and not np.isnan(grass_iou):
+                    data_row['优先级评分'] = grt_grass * (1 - grass_iou)
                 else:
-                    scene_avg_priority = 0
+                    data_row['优先级评分'] = np.nan
 
-                scene_scores["平均优先级分数"] = scene_avg_priority
-
-                # 保存场景评分
-                result["场景优先级评分"][scene_name] = scene_scores
-                all_priority_scores.append(scene_avg_priority)
-                group_priorities.append(scene_avg_priority)
-                total_scenes += 1
-
-            # 计算分组平均优先级
-            if group_priorities:
-                result["汇总统计"]["各分组统计"][sub_folder]["平均优先级"] = sum(group_priorities) / len(group_priorities)
-
-    # 计算总统计
-    result["汇总统计"]["总场景数"] = total_scenes
-    if all_priority_scores:
-        result["汇总统计"]["总体平均优先级"] = sum(all_priority_scores) / len(all_priority_scores)
-
-    # 计算各类别的优先级排行
-    class_priority_dict = {}
-    for scene_name, scene_scores in result["场景优先级评分"].items():
-        for class_name, class_score in scene_scores["类别优先级分数"].items():
-            if class_name not in class_priority_dict:
-                class_priority_dict[class_name] = []
-            class_priority_dict[class_name].append({
-                "场景": scene_name,
-                "分数": class_score["优先级分数"]
-            })
-
-    # 对每个类别的场景按分数排序
-    for class_name, scores_list in class_priority_dict.items():
-        # 按分数降序排序
-        sorted_scores = sorted(scores_list, key=lambda x: x["分数"], reverse=True)
-        result["汇总统计"]["各类别优先级排行"][class_name] = sorted_scores[:10]  # 只保留前10个
-
-    # 输出结果
-    print("\n场景优先级评估完成！")
-    print(f"总共评估场景数: {total_scenes}")
-    if all_priority_scores:
-        print(f"总体平均优先级: {result['汇总统计']['总体平均优先级']:.4f}")
-
-    # 输出所有场景评分的表格
-    print("\n" + "="*140)
-    print(f"{'场景名':<25} {'分组':<8} {'点云数':<12} {'分组占比':<10} {'全局占比':<10} {'平均优先级':<12}")
-    print("="*140)
-
-    # 按优先级从高到低排序所有场景
-    sorted_scenes = sorted(result["场景优先级评分"].items(),
-                           key=lambda x: x[1]["平均优先级分数"],
-                           reverse=True)
-
-    for scene_name, scene_info in sorted_scenes:
-        basic = scene_info["场景基本信息"]
-        print(f"{scene_name:<25} {basic['分组']:<8} {basic['点云数量']:<12} "
-              f"{basic['场景占分组比例']:<10.2%} {basic['场景占全局比例']:<10.2%} "
-              f"{scene_info['平均优先级分数']:<12.4f}")
-
-    # 输出各类别优先级最高的场景（前5个）
-    print("\n" + "="*140)
-    print("\n各类别优先级最高的场景（前5个）：")
-    for class_name, top_scores in result["汇总统计"]["各类别优先级排行"].items():
-        if top_scores:
-            print(f"\n{class_name}:")
-            print("-" * 60)
-            print(f"{'排名':<5} {'场景名':<25} {'优先级分数':<12} {'类别占比':<10} {'IoU':<10} {'(1-IoU)':<10} {'评分分解':<25}")
-            print("-" * 90)
-
-            for i, item in enumerate(top_scores[:5], 1):
-                scene_info = result["场景优先级评分"][item['场景']]
-                class_score = scene_info["类别优先级分数"].get(class_name, {})
-                group_ratio = scene_info["场景基本信息"]["场景占分组比例"]
-                class_ratio = class_score.get('类别在场景占比', 0)
-                iou = class_score.get('类别IoU', 0)
-                priority = class_score.get('优先级分数', 0)
-
-                # 评分分解：group_ratio * class_ratio * (1-iou)
-                calc_check = f"{group_ratio:.3f} × {class_ratio:.3f} × {1-iou:.3f} = {priority:.6f}"
-
-                print(f"{i:<5} {item['场景']:<25} {item['分数']:<12.4f} "
-                      f"{class_ratio:<10.2%} {iou:<10.2%} {(1-iou):<10.2%} {calc_check}")
-
-    # 输出分组统计
-    print("\n" + "="*140)
-    print("\n各分组统计：")
-    print("-" * 50)
-    for group_name, group_stats in result["汇总统计"]["各分组统计"].items():
-        print(f"{group_name}: 场景数={group_stats['场景数']}, 平均优先级={group_stats['平均优先级']:.4f}")
-
-    # 输出CSV文件（表格格式）
-    if output_json:
-        # 将文件扩展名改为.csv
-        csv_output = output_json.replace('.json', '.csv')
-
-        # 准备CSV数据
-        # 收集所有类别名称
-        all_classes = set()
-        for scene_name, scene_scores in result["场景优先级评分"].items():
-            all_classes.update(scene_scores["类别优先级分数"].keys())
-        all_classes = sorted(list(all_classes))  # 排序以保证顺序一致
-
-        # 创建CSV行数据
-        csv_rows = []
-        # 表头
-        header = ['场景名称', '数据分组', '点云数量', '占分组比例', '占全局比例'] + all_classes + ['平均优先级']
-        csv_rows.append(header)
-
-        # 按平均优先级排序
-        sorted_scenes = sorted(result["场景优先级评分"].items(),
-                             key=lambda x: x[1]["平均优先级分数"],
-                             reverse=True)
-
-        # 每个场景的数据
-        for scene_name, scene_info in sorted_scenes:
-            basic = scene_info["场景基本信息"]
-            row = [
-                scene_name,
-                basic['分组'],
-                str(basic['点云数量']),
-                f"{basic['场景占分组比例']:.2%}",
-                f"{basic['场景占全局比例']:.2%}"
-            ]
-
-            # 各类别得分
-            class_scores = scene_info["类别优先级分数"]
-            for class_name in all_classes:
-                if class_name in class_scores:
-                    row.append(f"{class_scores[class_name]['优先级分数']:.3f}")
+                # grass_混淆程度评分 = grt_grass * max(混淆度)
+                if not np.isnan(grt_grass):
+                    confusion_values = [
+                        data_row.get('grass2background', np.nan),
+                        data_row.get('grass2vegetation', np.nan),
+                        data_row.get('background2grass', np.nan),
+                        data_row.get('vegetation2grass', np.nan)
+                    ]
+                    # 过滤掉NaN值
+                    valid_confusions = [v for v in confusion_values if not np.isnan(v)]
+                    if valid_confusions:
+                        data_row['grass_混淆程度评分'] = grt_grass * max(valid_confusions)
+                    else:
+                        data_row['grass_混淆程度评分'] = np.nan
                 else:
-                    row.append("0.000")
+                    data_row['grass_混淆程度评分'] = np.nan
 
-            # 平均优先级
-            row.append(f"{scene_info['平均优先级分数']:.3f}")
+    # 1.8 计算所有数据的汇总精度统计
+    if pred_folder and data_folder:
+        # 初始化总混淆矩阵
+        total_score_matrix = np.zeros((class_num, class_num), dtype='int')
 
-            csv_rows.append(row)
+        # 遍历所有数据行，直接使用已保存的混淆矩阵进行累加
+        for data_row in all_data:
+            if '_score_matrix' in data_row:
+                total_score_matrix += data_row['_score_matrix']
 
-        # 写入CSV文件
-        import csv
-        with open(csv_output, 'w', encoding='utf-8-sig', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerows(csv_rows)
+        # 基于总混淆矩阵计算评估指标
+        score_rec, score_pre, score_iou = points_eval.eval_result(total_score_matrix, class_num)
 
-        print(f"\n评估结果已保存到CSV文件: {csv_output}")
+        # 创建汇总行
+        summary_row = {'分组': '', '场景名': '点云层精度统计'}
 
-        # 同时保存JSON格式以保留完整信息
-        json_output = output_json
-        with open(json_output, 'w', encoding='utf-8') as f:
-            json.dump(result, f, ensure_ascii=False, indent=4)
-        print(f"详细评估结果已保存到JSON文件: {json_output}")
+        # 计算平均指标
+        summary_row['平均召回率'] = np.mean(score_rec)
+        summary_row['平均精确率'] = np.mean(score_pre)
+        summary_row['平均iou'] = np.mean(score_iou)
 
-    return result
+        # 计算各类别指标
+        for i, cat_name in enumerate(category_columns):
+            summary_row[f'{cat_name}_recall'] = score_rec[i]
+            summary_row[f'{cat_name}_precision'] = score_pre[i]
+            summary_row[f'{cat_name}_iou'] = score_iou[i]
+
+        all_data.append(summary_row)
+
+    # 删除临时列_score_matrix
+    for data_row in all_data:
+        if '_score_matrix' in data_row:
+            del data_row['_score_matrix']
+
+    # 转换为DataFrame
+    df = pd.DataFrame(all_data)
+
+    # 2 按分组排序，然后按场景名排序
+    if len(df) > 0:
+        # 按分组顺序排序（train -> val -> test）
+        group_order = {'train': 0, 'val': 1, 'test': 2}
+        df['_group_order'] = df['分组'].map(group_order)
+        df = df.sort_values(['_group_order', '场景名'])  # 优先级排序，分组>场景名
+        df = df.drop('_group_order', axis=1)
+        df = df.reset_index(drop=True)
+
+    # 3 保存到CSV
+    if output_csv and len(df) > 0:
+        df.to_csv(output_csv, index=False, encoding='utf-8-sig')
+        print(f"\n场景分组CSV已保存到: {output_csv}")
+
+    # 打印统计信息
+    if len(df) > 0:
+        print("\n分组统计:")
+        for group_name in data_version.keys():
+            count = len(data_version[group_name])
+            print(f"  {group_name}: {count} 个场景")
+        print(f"  总计: {len(df)} 个场景")
+    return df
 
 
-# 新增函数：计算子类别占比
-def calculate_sublabel_ratio(scene_info, scene_name):
+def csv_to_xlsx(csv_path, xlsx_path=None, columns_dict=None):
     '''
-    计算场景中各个类的子类别占比
-
+    可视化效果优化。读入CSV表格，写出xlsx格式
     参数:
-        scene_info: 包含标签信息的字典，格式为 {'pts_num': int, 'labels': dict}
-                    其中 labels 是标签分布字典，如 {0: {'数量': c, '比例': p}, 1: {...}, ...}
-        scene_name: 场景名称，用于从 label_rate 中获取对应的子类别
-
+        csv_path: 输入CSV文件路径
+        xlsx_path: 输出xlsx文件路径（可选，默认与csv_path同目录，扩展名改为xlsx）
+        columns_dict: 属性字典，格式为 {'属性组名': ['列名1', '列名2', ...]}
+                      如果为None，则输出所有属性；否则只输出字典中指定的属性
     返回:
-        修改后的 scene_info，其中 labels 字典增加了子类别信息
-        格式: label: {'数量': c, '比例': p, '平坦': c*0.5, '斜坡': c*0.5, ...}
+        None
     '''
-    return update_scene_info_with_sublabels(scene_info, scene_name)
+    # 如果没有指定xlsx_path，默认使用同目录下同文件名的xlsx
+    if xlsx_path is None:
+        xlsx_path = os.path.splitext(csv_path)[0] + '.xlsx'
 
+    # 读取CSV文件
+    df = pd.read_csv(csv_path, encoding='utf-8-sig')
 
-def update_scene_info_with_sublabels(scene_info, scene_name):
-    '''
-    根据场景名称更新 scene_info，添加子类别占比信息
+    # 定义完整的属性组
+    full_attribute_groups = {
+        '点云统计': ['点云数量', 'background', 'building', 'car', 'vegetation', 'grass'],
+        '场景比例': ['数据占比', 'drt_background', 'drt_building', 'drt_car', 'drt_vegetation', 'drt_grass'],
+        '分组类别比例': ['分组占比-总点云', 'grt_background', 'grt_building', 'grt_car', 'grt_vegetation', 'grt_grass'],
+        '精度统计': ['平均召回率', '平均精确率', '平均iou',
+                     'background_recall', 'background_precision', 'background_iou',
+                     'building_recall', 'building_precision', 'building_iou',
+                     'car_recall', 'car_precision', 'car_iou',
+                     'vegetation_recall', 'vegetation_precision', 'vegetation_iou',
+                     'grass_recall', 'grass_precision', 'grass_iou'],
+        '混淆对比': ['grass2background', 'grass2vegetation', 'background2grass', 'vegetation2grass'],
+        '评分': ['优先级评分', 'grass_混淆程度评分']
+    }
 
-    参数:
-        scene_info: 包含标签信息的字典，格式为 {'pts_num': int, 'labels': dict}
-        scene_name: 场景名称，用于从 label_rate 中获取对应的子类别
+    # 根据columns_dict筛选需要输出的列
+    if columns_dict is not None:
+        # 收集所有需要输出的列
+        output_columns = []
+        for group_name in columns_dict.keys():
+            if group_name in full_attribute_groups:
+                # 对于指定的属性组，只输出columns_dict中指定的列（存在于数据中的）
+                for col in columns_dict[group_name]:
+                    if col in df.columns:
+                        output_columns.append(col)
+        # 添加'分组'和'场景名'列（如果存在）
+        if '分组' in df.columns and '分组' not in output_columns:
+            output_columns.insert(0, '分组')
+        if '场景名' in df.columns and '场景名' not in output_columns:
+            if '分组' in output_columns:
+                output_columns.insert(1, '场景名')
+            else:
+                output_columns.insert(0, '场景名')
+        # 筛选DataFrame
+        df = df[output_columns]
+        # 根据筛选后的列更新属性组
+        attribute_groups = {}
+        for group_name in columns_dict.keys():
+            if group_name in full_attribute_groups:
+                # 只保留存在于输出数据中的列
+                valid_columns = [col for col in columns_dict[group_name] if col in df.columns]
+                if valid_columns:
+                    attribute_groups[group_name] = valid_columns
+    else:
+        # 使用完整的属性组
+        attribute_groups = full_attribute_groups
 
-    返回:
-        修改后的 scene_info，其中 labels 字典增加了子类别信息
-    '''
-    # 复制输入字典以避免修改原始数据
-    scene_info_modified = copy.deepcopy(scene_info)
+    # 需要转换为百分比的列名
+    percent_columns = [
+        'drt_background', 'drt_building', 'drt_car', 'drt_vegetation', 'drt_grass',
+        '分组占比-总点云',
+        'grt_background', 'grt_building', 'grt_car', 'grt_vegetation', 'grt_grass',
+        '平均召回率', '平均精确率', '平均iou',
+        'background_recall', 'background_precision', 'background_iou',
+        'building_recall', 'building_precision', 'building_iou',
+        'car_recall', 'car_precision', 'car_iou',
+        'vegetation_recall', 'vegetation_precision', 'vegetation_iou',
+        'grass_recall', 'grass_precision', 'grass_iou',
+        'grass2background', 'grass2vegetation', 'background2grass', 'vegetation2grass',
+        '优先级评分', 'grass_混淆程度评分'
+    ]
 
-    # 获取该场景的子类别列表
-    if scene_name in data_dict.label_rate:
-        scene_sublabels = data_dict.label_rate[scene_name]
+    # 写入xlsx文件并设置格式
+    with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Sheet1')
+        worksheet = writer.sheets['Sheet1']
 
-        # 遍历每个标签类别
-        for label_id, label_info in scene_info_modified['labels'].items():
-            count = label_info['数量']
-            ratio = label_info['比例']
+        # 导入样式模块
+        from openpyxl.styles import Font, PatternFill, Border, Side
+        from openpyxl.styles.numbers import FORMAT_PERCENTAGE_00
 
-            # 根据标签ID确定对应的子类别
-            label_subcategories = []
-            if label_id == 0:  # 背景
-                label_subcategories = [sub for sub in scene_sublabels if sub in data_dict.sub_label["背景"]]
-            elif label_id == 1:  # 建筑
-                label_subcategories = [sub for sub in scene_sublabels if sub in data_dict.sub_label["建筑"]]
-            elif label_id == 2:  # 车辆
-                label_subcategories = [sub for sub in scene_sublabels if sub in data_dict.sub_label["车辆"]]
+        # 定义标题填充色
+        color_map = {
+            # 浅绿色：点云数量和各类别数量
+            '点云数量': 'C6E0B4',
+            'background': 'C6E0B4',
+            'building': 'C6E0B4',
+            'car': 'C6E0B4',
+            'vegetation': 'C6E0B4',
+            'grass': 'C6E0B4',
+            # 浅黄色：数据占比和各类别数据占比
+            '数据占比': 'FFF2CC',
+            'drt_background': 'FFF2CC',
+            'drt_building': 'FFF2CC',
+            'drt_car': 'FFF2CC',
+            'drt_vegetation': 'FFF2CC',
+            'drt_grass': 'FFF2CC',
+            # 浅橙色：分组占比和各类别分组占比
+            '分组占比-总点云': 'FFE0B2',
+            'grt_background': 'FFE0B2',
+            'grt_building': 'FFE0B2',
+            'grt_car': 'FFE0B2',
+            'grt_vegetation': 'FFE0B2',
+            'grt_grass': 'FFE0B2',
+            # 浅红色：评估指标
+            '平均召回率': 'F4CCCC',
+            '平均精确率': 'F4CCCC',
+            '平均iou': 'F4CCCC',
+            'background_recall': 'F4CCCC',
+            'background_precision': 'F4CCCC',
+            'background_iou': 'F4CCCC',
+            'building_recall': 'F4CCCC',
+            'building_precision': 'F4CCCC',
+            'building_iou': 'F4CCCC',
+            'car_recall': 'F4CCCC',
+            'car_precision': 'F4CCCC',
+            'car_iou': 'F4CCCC',
+            'vegetation_recall': 'F4CCCC',
+            'vegetation_precision': 'F4CCCC',
+            'vegetation_iou': 'F4CCCC',
+            'grass_recall': 'F4CCCC',
+            'grass_precision': 'F4CCCC',
+            'grass_iou': 'F4CCCC',
+            # 浅紫色：grass混淆度
+            'grass2background': 'D9D2E9',
+            'grass2vegetation': 'D9D2E9',
+            'background2grass': 'D9D2E9',
+            'vegetation2grass': 'D9D2E9',
+            # 浅蓝色：评分指标
+            '优先级评分': 'CFE2F3',
+            'grass_混淆程度评分': 'CFE2F3',
+        }
 
-            # 计算子类别占比
-            if len(label_subcategories) > 0:
-                sub_ratio = 1.0 / len(label_subcategories)
-                for subcategory in label_subcategories:
-                    scene_info_modified['labels'][label_id][subcategory] = count * sub_ratio
+        # 定义边框样式（黑色细边框）
+        left_border = Border(left=Side(style='thin', color='000000'))
+        right_border = Border(right=Side(style='thin', color='000000'))
 
-    return scene_info_modified
+        # 获取每个属性组的第一列和最后一列
+        group_first_columns = set()  # 需要左边框的列
+        group_last_columns = set()   # 需要右边框的列
+        for group_name, columns in attribute_groups.items():
+            group_first_columns.add(columns[0])  # 第一列
+            group_last_columns.add(columns[-1])   # 最后一列
+
+        # 设置标题行加粗和填充色，以及属性组边框
+        for cell in worksheet[1]:  # 第一行是标题
+            cell.font = Font(bold=True)
+            if cell.value in color_map:
+                cell.fill = PatternFill(start_color=color_map[cell.value], end_color=color_map[cell.value], fill_type='solid')
+            # 设置属性组左边框
+            if cell.value in group_first_columns:
+                cell.border = left_border
+            # 设置属性组右边框
+            elif cell.value in group_last_columns:
+                cell.border = right_border
+
+        # 为所有数据行设置属性组边框和"分组"/"场景名"列格式
+        for row in worksheet.iter_rows(min_row=2):
+            for cell in row:
+                column_name = worksheet.cell(1, cell.column).value
+
+                # 设置"分组"和"场景名"列加粗
+                if column_name in ['分组', '场景名']:
+                    cell.font = Font(bold=True)
+
+                # 设置"分组"列的填充色
+                if column_name == '分组' and cell.value in ['train', 'val', 'test']:
+                    if cell.value == 'train':
+                        cell.fill = PatternFill(start_color='CFE2F3', end_color='CFE2F3', fill_type='solid')
+                    elif cell.value == 'val':
+                        cell.fill = PatternFill(start_color='FFF2CC', end_color='FFF2CC', fill_type='solid')
+                    elif cell.value == 'test':
+                        cell.fill = PatternFill(start_color='C6E0B4', end_color='C6E0B4', fill_type='solid')
+
+                # 设置属性组边框
+                if column_name in group_first_columns:
+                    cell.border = left_border
+                elif column_name in group_last_columns:
+                    cell.border = right_border
+
+        # 设置百分比列的格式
+        for row in worksheet.iter_rows(min_row=2):  # 从第二行开始（数据行）
+            for cell in row:
+                column_name = worksheet.cell(1, cell.column).value  # 获取列名
+                if column_name in percent_columns:
+                    if isinstance(cell.value, (int, float)) and not np.isnan(cell.value):
+                        # 转换为百分比格式（保留两位小数）
+                        cell.number_format = FORMAT_PERCENTAGE_00
+
+                        # 分组占比列的条件格式化
+                        if column_name in ['分组占比-总点云', 'grt_background', 'grt_building', 'grt_car', 'grt_vegetation', 'grt_grass']:
+                            value = cell.value
+                            if value > 0.2:
+                                # 超过20%：红色加粗
+                                cell.font = Font(bold=True, color='FF0000')
+                            elif value >= 0.1:
+                                # 10%-20%：橙色加粗
+                                cell.font = Font(bold=True, color='FFA500')
+                            elif value >= 0.05:
+                                # 5%-10%：紫色加粗
+                                cell.font = Font(bold=True, color='800080')
+
+                        # grass混淆度列的条件格式化
+                        elif column_name in ['grass2background', 'grass2vegetation', 'background2grass', 'vegetation2grass']:
+                            value = cell.value
+                            if value > 0.5:
+                                # 超过50%：红色加粗
+                                cell.font = Font(bold=True, color='FF0000')
+                            elif value >= 0.2:
+                                # 20%-50%：橙色加粗
+                                cell.font = Font(bold=True, color='FFA500')
+                            elif value >= 0.1:
+                                # 10%-20%：紫色加粗
+                                cell.font = Font(bold=True, color='800080')
+
+                        # grass_iou的条件格式化
+                        elif column_name == 'grass_iou':
+                            value = cell.value
+                            if value < 0.2:
+                                # 小于20%：红色加粗
+                                cell.font = Font(bold=True, color='FF0000')
+                            elif value < 0.4:
+                                # 20%-40%：橙色加粗
+                                cell.font = Font(bold=True, color='FFA500')
+                            elif value < 0.6:
+                                # 40%-60%：紫色加粗
+                                cell.font = Font(bold=True, color='800080')
+
+                        # 优先级评分和grass混淆程度评分的条件格式化
+                        elif column_name in ['优先级评分', 'grass_混淆程度评分']:
+                            value = cell.value
+                            if value > 0.1:
+                                # 超过10%：红色加粗
+                                cell.font = Font(bold=True, color='FF0000')
+                            elif value >= 0.05:
+                                # 5%-10%：橙色加粗
+                                cell.font = Font(bold=True, color='FFA500')
+                            elif value >= 0.02:
+                                # 2%-5%：紫色加粗
+                                cell.font = Font(bold=True, color='800080')
+
+        # 冻结前两列和第一行
+        worksheet.freeze_panes = "C2"
+
+        # 设置列宽
+        for col in worksheet.columns:
+            column_letter = col[0].column_letter
+            if col[0].value == '场景名':
+                worksheet.column_dimensions[column_letter].width = 22.5
+
+    print(f"\nXLSX文件已保存到: {xlsx_path}")
 
 
 if __name__ == '__main__':
-    # # 示例1: 评估数据分布
-    # data_folder = r'/media/xuek/Data210/数据集/训练集/重建数据_动态维护_pth'
-    output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/数据分布信息.json'
-    # eval_train_data(data_folder, output_json)
+    if True:  # 数据分析+可视优化
+        data_version = "V20251223"  # 模型版本
+        label_folder = r'H:\TempProcess\20251224数据处理\2合并标签'
+        pred_folder = label_folder
+        output_csv = r'H:\commonFunc_3D\application\PTV3_dataprocess/评价结果'+data_version+'_1数据.csv'
+        label_version_pred = "label05_V1_pred"
+        # 注意，内部会默认转ply风格的字典，不需要外部添加（待确定）
+        # 1 数据分析：生成csv
+        generate_scene_group_csv(output_csv, data_folder=label_folder, pred_folder=pred_folder,
+                                 label_version_pred=label_version_pred)
+        # 2 可视优化：生成xlsx
+        input_csv = output_csv
+        output_xlsx = r'H:\commonFunc_3D\application\PTV3_dataprocess/评价结果'+data_version+'_2可视.xlsx'
+        columns_dict = {
+            "点云统计": [
+                "点云数量", "background", "building", "car", "vegetation", "grass"
+            ],
+            "场景比例": [
+                "drt_background", "drt_building", "drt_car", "drt_vegetation", "drt_grass"
+            ],
+            "分组类别比例": [
+                "分组占比-总点云", "grt_background", "grt_building", "grt_car", "grt_vegetation", "grt_grass"
+            ],
+            "精度统计": [
+                "平均召回率", "平均精确率", "平均iou", "background_recall", "background_precision",
+                "background_iou", "building_recall", "building_precision", "building_iou",
+                "car_recall", "car_precision", "car_iou", "vegetation_recall", "vegetation_precision",
+                "vegetation_iou", "grass_recall", "grass_precision", "grass_iou"
+            ],
+            "混淆对比": [
+                "grass2background", "grass2vegetation", "background2grass", "vegetation2grass"
+            ],
+            "评分": ["优先级评分", "grass_混淆程度评分"]
+        }
 
-    # 示例2: 批量评估两个文件夹下的PLY文件对比
-    # # 执行批量评估
-    # folder1 = r'/media/xuek/Data210/数据集/训练集/重建数据_动态维护_ply'  # 第一个文件夹路径
-    # folder2 = r'/media/xuek/Data210/数据集/临时测试区/20251216_2版本'  # 第二个文件夹路径
-    # label_name1 = 'label_label05_V1'  # 第一个文件夹文件的标签字段名
-    # label_name2 = 'class_class'  # 第二个文件夹文件的标签字段名
-    ply_output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/ply批量评估结果.json'
-    # eval_ply_folder_comparison(folder1, folder2, label_name1, label_name2, ply_output_json)
+        csv_to_xlsx(input_csv, output_xlsx, columns_dict)
 
-    # 示例3: 评估场景处理优先级
-    data_dist_json = output_json
-    ply_eval_json = ply_output_json
-    priority_output_json = r'/home/xuek/桌面/PTV3_Versions/Common_3D/application/PTV3_dataprocess/场景优先级评估.json'
+    if False:  # 数据分析
+        output_csv = r'H:\commonFunc_3D\application\PTV3_dataprocess/输出测试.csv'
+        label_folder = r'J:\DATASET\BIMTwins\版本备份\多标签_动态维护版'
+        pred_folder = r"H:\TempProcess\20251220数据传输\2合并标签"
+        label_version_pred = "label05_V1_pred"
+        # 注意，内部会默认转ply风格的字典，不需要外部添加（待确定）
+        generate_scene_group_csv(output_csv, data_folder=label_folder, pred_folder=pred_folder,
+                                 label_version_pred=label_version_pred)
 
-    # 评估场景优先级
-    evaluate_scene_priority(data_dist_json, ply_eval_json, priority_output_json)
+    if False:  # 数据格式优化
+        input_csv = r'H:\commonFunc_3D\application\PTV3_dataprocess/输出测试.csv'
+        output_xlsx = r'H:\commonFunc_3D\application\PTV3_dataprocess/输出测试.xlsx'
+#         columns_dict = {
+#             "点云统计": [
+#                 "点云数量", "background", "building", "car", "vegetation", "grass"
+#             ],
+#             "场景比例": [
+#                 "数据占比", "drt_background", "drt_building", "drt_car", "drt_vegetation", "drt_grass"
+#             ],
+#             "分组类别比例": [
+#                 "分组占比-总点云", "grt_background", "grt_building", "grt_car", "grt_vegetation", "grt_grass"
+#             ],
+#             "精度统计": [
+#                 "平均召回率", "平均精确率", "平均iou", "background_recall", "background_precision",
+#                 "background_iou", "building_recall", "building_precision", "building_iou",
+#                 "car_recall", "car_precision", "car_iou", "vegetation_recall", "vegetation_precision",
+#                 "vegetation_iou", "grass_recall", "grass_precision", "grass_iou"
+#             ],
+#             "混淆对比": [
+#                 "grass2background", "grass2vegetation", "background2grass", "vegetation2grass"
+#             ],
+        #             "评分": ["优先级评分", "grass_混淆程度评分"]
+#         }
+        columns_dict = {
+            "点云统计": [
+                "点云数量", "background", "building", "car", "vegetation", "grass"
+            ],
+            "场景比例": [
+                 "drt_background", "drt_building", "drt_car", "drt_vegetation", "drt_grass"
+            ],
+            "分组类别比例": [
+                "分组占比-总点云", "grt_background", "grt_building", "grt_car", "grt_vegetation", "grt_grass"
+            ],
+            "精度统计": [
+                "平均召回率", "平均精确率", "平均iou", "background_recall", "background_precision",
+                "background_iou", "building_recall", "building_precision", "building_iou",
+                "car_recall", "car_precision", "car_iou", "vegetation_recall", "vegetation_precision",
+                "vegetation_iou", "grass_recall", "grass_precision", "grass_iou"
+            ],
+            "混淆对比": [
+                "grass2background", "grass2vegetation", "background2grass", "vegetation2grass"
+            ],
+            "评分": ["优先级评分", "grass_混淆程度评分"]
+        }
 
-    print("\n" + "="*60)
-    print("所有任务完成！")
-    print("\n生成的文件:")
-    print(f"1. 数据分布信息: {output_json}")
-    print(f"2. PLY批量评估结果: {ply_output_json}")
-    print(f"3. 场景优先级评估 (CSV): {priority_output_json.replace('.json', '.csv')}")
-    print(f"4. 场景优先级评估 (详细JSON): {priority_output_json}")
+        csv_to_xlsx(input_csv, output_xlsx, columns_dict)
+
