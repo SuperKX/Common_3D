@@ -153,6 +153,7 @@ def labels_file_eval(file, classNum, label_name1, label_name2, label_dict1={}, l
     '''
     # 1 读取文件
     points_dict = pts_io.parse_cloud_to_dict(file)
+    print(f"点云数量： {len(points_dict['coords'])}")
     if label_name1 not in points_dict:
         raise ValueError(f'文件1没有{label_name1}标签：{file}')
     if label_name2 not in points_dict:
@@ -369,6 +370,8 @@ def files_labels_merge(file1, file2, label_dict1, label_dict2, file_out):
     同一点云不同个体，带着不同版本的标签。处理合并到一个文件中。
     注意：
         1、只保留提到的标签，其余不处理。
+        2、不包含提到的标签，也不报错。
+        3、已经标准化（uchar类型标签）
     TODO: 点云是否相同判定，判定点顺序是否对应
     '''
     new_dict = {}
@@ -389,47 +392,92 @@ def files_labels_merge(file1, file2, label_dict1, label_dict2, file_out):
     pts_io.write_ply_from_dict(file_out, new_dict, True)
 
 
+def  label_convert_func(folder_from, folder_to, label_from, label_to):
+    '''
+        遍历folder_from中的文件，转换标签写出
+        注意：
+            1、当前只考虑写出一个标签，暂时不考虑标签替换、新增等。
+            2、默认使用element 格式的ply
+    '''
+    string_mapping = label_from+"_to_"+label_to
+    label_dict_trans = label_dict.LabelRegistry.label_mappings[string_mapping]
+
+
+    formats = ['.ply', '.pcd']
+    file_list = pth_process.get_files_by_format(folder_from, formats, return_full_path=False)
+    if not os.path.exists(folder_from):
+        raise ValueError(f'地址找不到文件夹：{folder_from}')
+    if len(file_list) == 0:
+        raise ValueError(f'地址找不到目标格式的文件：{folder_from}')
+    os.makedirs(folder_to, exist_ok=True)
+
+    for file_name in file_list:
+        file =os.path.join(folder_from, file_name)
+        points_dict = pts_io.parse_cloud_to_dict(file)
+        labels_before = points_dict["label_"+label_from]
+        labels_after = label_change(labels_before, label_dict_trans)
+
+        # 构造新点云
+        points_dict_new = {'coords':points_dict['coords'],
+                           'colors':points_dict['colors'],
+                          label_to:labels_after}
+        pts_io.write_ply_from_dict(os.path.join(folder_to, file_name), points_dict_new, True)
+
+
+
 if __name__ == '__main__':
-    if False:  # 标签标准化（需要显示写出ply文件的element名！）
+    if False:  # 标签标准化
+        '''
+            1、需要显示写出ply文件的element名！
+            2、只修改标签名，不进行重新映射
+            3、不需要的标签需要‘delete’
+        '''
         if False:  # 单文件
-            file = r'J:\DATASET\BIMTwins\版本2025.10.15/01JXY.ply'
-            file_output = r'J:\DATASET\BIMTwins\标准数据集/01JXY.ply'
-            label_change_dict = {"vertex_class": "label12_V1", "class_class": "label05_V1_predict"}
+            file = r'H:\TempProcess\20251204返回数据\3标签修改/39PTY2 - Cloud.ply'
+            file_output = r'H:\TempProcess\20251204返回数据\3标签修改/39PTY2 - Cloud2.ply'
+            label_change_dict = {"vertex_scalar_label12_V1": "scalar_label12_V1", "vertex_scalar_scalar_mapnew": "label05_V1_predict", "vertex_scalar_label05_V1_pred":"delete"}
             labeled_data_standard(file, file_output, label_change_dict)
         else:
-            folder = r'H:\TempProcess\20251130返回数据\lablel04_修改标签'
-            folder_output = r'H:\TempProcess\20251130返回数据\lablel04_修改标签_标准化'
+            folder = r'H:\TempProcess\20251216标注版本\3_修改标签'
+            folder_output = r'H:\TempProcess\20251216标注版本\4_更新数据集'
             os.makedirs(folder_output, exist_ok=True)
-            label_change_dict = {"vertex_scalar_label04_V1": "label04_V1", "vertex_scalar_label05_V1_pred":"delete", "vertex_scalar_scalar_mapnew":"label05_V1"}
+            label_change_dict = {"vertex_scalar_label12_V1": "label12_V1",
+                                 "vertex_scalar_label04_V1": "label04_V1",
+                                 "vertex_scalar_label05_V1_pred":"delete",
+                                 "vertex_scalar_label05_V1":"delete",
+                                 "vertex_scalar_scalar_mapnew":"label05_V1"}
             file_list = pth_process.get_files_by_format(folder, ['.ply', '.pcd'], return_full_path=False)
             for name_ext in file_list:
                 print(f"开始处理: {name_ext}")
                 labeled_data_standard(os.path.join(folder, name_ext), os.path.join(folder_output, name_ext), label_change_dict)
 
-    if True:  # 多数据，多标签合并：解决多个标签打在不同数据中。（需要显示写出ply文件的element名！）
-        if True:  # 单文件
-            file1 = r'H:\TempProcess\20251130返回数据\label12_合并标签\07DJXZ1.ply'
-            file2 = r'H:\TempProcess\20251130返回数据\07DJXZ1 - Cloud_workspace.ply'
+    if False:  # 多数据，多标签合并：解决多个标签打在不同数据中。（需要显示写出ply文件的element名！）
+        if False:  # 单文件
+            file1 = r'J:\DATASET\BIMTwins\版本备份\多标签_动态维护版\01JXY12.ply'
+            file2 = r'H:\TempProcess\20251216标注版本\3_修改标签\01JXY12-少标签.ply'
             label_dict1 = {"label_label12_V1": "label12_V1"}
-            label_dict2 = {"vertex_scalar_scalar_mapnew": "label05_V1_pred"}
-            file_out = r'H:\TempProcess\20251130返回数据\label12_合并标签\07DJXZ1_out.ply'
+            label_dict2 = {"vertex_scalar_scalar_mapnew": "label05_V1"}
+            file_out = r'H:\TempProcess\20251216标注版本\3_修改标签\01JXY12.ply'
             files_labels_merge(file1, file2, label_dict1, label_dict2, file_out)
         else:  # 文件夹遍历
-            folder1 = r'J:\DATASET\BIMTwins\版本备份\版本2025.10.15'
-            folder2 = r'H:\TempProcess\20251130返回数据\label12不变_推理结果'
-            file_out_folder = r'H:\TempProcess\20251130返回数据\label12不变_合并标签'
+            folder1 = r'J:\DATASET\BIMTwins\版本备份\多标签_动态维护版'
+            folder2 = r'H:\TempProcess\20251224数据处理\推理v20251223'
+            name_pre = r"重建数据_动态维护_ply"+"_"
+            file_out_folder = r'H:\TempProcess\20251224数据处理\2合并标签'
             os.makedirs(file_out_folder, exist_ok=True)
             file_list1 = pth_process.get_files_by_format(folder1, ['.ply', '.pcd'], return_full_path=True)
             file_list2 = pth_process.get_files_by_format(folder2, ['.ply', '.pcd'], return_full_path=True)
             for i in range(len(file_list1)):
                 file_name = os.path.split(file_list1[i])[1]
-                file_path2 = os.path.join(folder2, "label12不变_"+file_name)
+                file_path2 = os.path.join(folder2, name_pre+file_name)
                 if not os.path.exists(file_path2):
                     print(f'没有匹配文件{file_path2}')
                     continue
                 file_out = os.path.join(file_out_folder, file_name)
-                label_dict1 = {"vertex_class": "label12_V1"}
+                # label_dict1 = {"label_label12_V1": "label12_V1","label_label04_V1": "label04_V1"}  # 所有标准标签
+                label_dict1 = {"label_label05_V1": "label05_V1"}  # 目标标签
                 label_dict2 = {"class_class": "label05_V1_pred"}
+                # label_dict2 = {"vertex_scalar_scalar_mapnew": "label05_V1"}
                 files_labels_merge(file_list1[i], file_path2, label_dict1, label_dict2, file_out)
 
     if False:  # 查看标签标签比例
@@ -445,8 +493,16 @@ if __name__ == '__main__':
             for name_ext in file_list:
                 file_label_info(os.path.join(folder, name_ext), label_name, label_dict=label_dict.label_map_l12v1_to_l05v1)
 
+    if True:  # 标签转换
+        folder_from = r'H:\TempProcess\20251224数据处理\2合并标签'
+        folder_to = r'H:\TempProcess\20251224数据处理\labelv05_V2'
+        label_from = "label05_V1"  # 源标签
+        label_to = "label05_V2"
+        label_convert_func(folder_from, folder_to, label_from, label_to)  # TODO: 增加变量，替换还是新增
+
+
     if False:  # 对比同文件两个变量
-        label_dict_input = label_dict.LabelRegistry.label_mappings['label04_V1_to_label05_V1']
+        label_dict_input = label_dict.LabelRegistry.label_mappings['label12_V1_to_label05_V1']
         element_name = "label"
         if False:  # 1 单文件
             file = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_weight20251113/val/val_34PTY1.ply'
@@ -455,10 +511,10 @@ if __name__ == '__main__':
                              label_name2=element_name + "_" + "label05_V1_pred",
                              label_dict1=label_dict_input, label_dict2={})  # TODO: 改成自适应选择标签，参考preprocess中代码
         else:  # 2 文件夹
-            folder = r'H:\TempProcess\20251130返回数据\label04_合并标签'
-            labels_file_folder_eval(folder, classNum=5,
-                                    label_name1=element_name + "_"+"label04_V1", label_name2=element_name + "_"+"label05_V1_pred",
-                                    label_dict1=label_dict_input, label_dict2={})  # TODO: 改成自适应选择标签，参考preprocess中代码
+            folder = r'H:\TempProcess\20251220数据传输\2合并标签'
+            labels_file_folder_eval(folder, classNum=5,  # TODO: 对于标准标签后续优化去除手动设置类别数量？是否可行？还是分开标准标签、和随机标签
+                                    label_name1=element_name + "_"+"label05_V1", label_name2=element_name + "_"+"label05_V1_pred",
+                                    label_dict1={}, label_dict2={})  # TODO: 改成自适应选择标签，参考preprocess中代码
     if False:
         # 1）6分类数据处理 ["background", "building", "car", "vegetation", "farmland", "grass"]
         label_dict_input = label_dict.label_map_l12v1_to_l06v1

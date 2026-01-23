@@ -9,6 +9,9 @@
 【layout_reasoning】
 功能：根据json文件，推理窗户位置，并返回推理后json
 
+【wall_reasoning】
+功能：墙面推理
+
 
 【数据位置】
 标签数据：

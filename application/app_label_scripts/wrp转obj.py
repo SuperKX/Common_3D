@@ -239,7 +239,6 @@ def mesh_to_group(filename, pth_fileP, obj_file, dic_old_pth):
     print(f"{filename} 2.2 完成 new序列 解析 {(time.time() - start_time):.4f}")
     start_time = time.time()
     # 建立新旧面片顺序的映射
-    # (有点慢)
     new_old_idx = ndarray_calculate.create_index_array(face_list_old, face_list_new)  # 索引,记录旧的映射到新的
     print(f"{filename} 2.3 完成 新旧面索引映射 {(time.time() - start_time):.4f}")
     start_time = time.time()
@@ -291,10 +290,11 @@ def groupedobj_to_cloud(filename, obj_file_grouped, subdense, cloud_file, bool_w
     return merged_cloud
 
 # 当前弃用，仅作为备份参考，使用whole_process_parallel替代。2025.07.29
+# 没有维护
 def whole_process(path_env, generate_labeled_obj=True, generate_all_clouds=True, generate_merged_cloud=True):
     '''
     全流程处理
-        path_env    输入场景的地址
+        path_env    输入场景的地址（内部结构："\obj"，"\pth"），其中根据pth文件索引遍历
         generate_labeled_obj    生成grouped的obj文件
         generate_all_clouds     obj分块点云化
         generate_merged_cloud   点云降采样及合并
@@ -302,9 +302,6 @@ def whole_process(path_env, generate_labeled_obj=True, generate_all_clouds=True,
     time_start = time.time()
     #0  配置信息
     # 1）标签(已经改为全局)
-    # classlist = ["background", "building", "wigwam", "car", "vegetation", "farmland",
-    #              "shed", "stockpiles", "bridge", "pole", "others", "grass"]
-    # label_list = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     # 2）地址
     inputPath_obj = path_env + r"\obj"
     inputPath_pth = path_env + r"\pth"
@@ -375,6 +372,7 @@ def whole_process_parallel(path_env, generate_labeled_obj=True, generate_all_clo
     subdense = 0.1  # gridsample密度
 
     # 0 构造传入参数
+    scene_name = os.path.basename(path_env)
     inputPath_obj = path_env + r"\obj"
     inputPath_pth = path_env + r"\pth"
     outputPath = path_env + r"\ply"
@@ -435,7 +433,7 @@ def whole_process_parallel(path_env, generate_labeled_obj=True, generate_all_clo
         # 4 点云合并及写出
         start_time = time.time()
         scene_cloud = np.vstack(subsample_clouds)
-        output_file = os.path.join(path_env, filename + '_sub0.1.ply')
+        output_file = os.path.join(path_env, scene_name + '.ply')
         pts_io.write_ply_file_binary_batch(output_file, scene_cloud)
         log_str += f" 4 点云合并及写出： {(time.time() - start_time):.4f}\n"
     log_str += f" 总耗时： {(time.time() - time_start):.4f}\n"
@@ -471,22 +469,24 @@ if __name__ == '__main__':
 
 # 功能执行区----------------------------------------------
     # 0 全流程处理
-    if True:
-        path_env = r"J:\DATASET\BIMTwins\WRP\out\batch1\36LT_out"
+    if False:
+        time_start = time.time()
+        path_env = r"J:\tempdata\temp_process_20251014\27DATA19_segs2"  # "J:\DATASET\BIMTwins\WRP\out\batch1\39PTY2_out"
+        # whole_process_parallel(path_env, generate_labeled_obj=True, generate_all_clouds=True, generate_merged_cloud=True)
+        # 不并行
         whole_process(path_env, generate_labeled_obj=True, generate_all_clouds=True, generate_merged_cloud=True)
 
     # 1 mesh按照标签group处理
     # 1.1 单个文件处理
-    if False:
-        filename = r'Tile_+001_+002'
-        folder_path = r'J:\DATASET\BIMTwins\WRP\out\batch1\34PTY1_out'
+    if True:
+        filename = r'Tile_0008_0011'
+        folder_path = r'J:\DATASET\BIMTwins\中间数据_标准版_2025.10.15\01JXY'
         pth_fileP = os.path.join(folder_path,'pth', filename+'.pth')
         inputPath_obj = os.path.join(folder_path,'obj')  # 文件夹
         obj_file = os.path.join(inputPath_obj, filename, filename + '.obj')  # 读入的obj文件
         dic_old_pth = os.path.join(inputPath_obj, filename, filename + '_old_face_dict.pth')
         mesh_to_group(filename, pth_fileP, obj_file, dic_old_pth)
     # 1.2 文件夹批量处理
-
 
     # 2 grouped_mesh点云化
     # 2.1 单个文件处理
@@ -503,7 +503,7 @@ if __name__ == '__main__':
         time_start = time.time()
         obj_folder = r'J:\DATASET\BIMTwins\WRP\out\batch1\34PTY1_out\obj'
         all_files = [d for d in os.listdir(obj_folder)]
-        if True:  # 并行  177.1s -》 120.8s
+        if True:  # 并行 120.8s
             args = []
             for filename in all_files:
                 subdense = 0.1
@@ -527,8 +527,9 @@ if __name__ == '__main__':
     # 3 点云采样及合并
     if False:
         import threading
-        folder_path = r'J:\DATASET\BIMTwins\WRP\out\batch1\31QL_out'
-        output_file = os.path.join(folder_path, 'mergesub0.13.ply')
+        folder_path = r"H:\TempProcess\wrp_process\39PTY2"
+        scene_name = os.path.split(folder_path)[1]
+        output_file = os.path.join(folder_path, scene_name+'.ply')
         folder_ply = os.path.join(folder_path, 'ply')
         all_files = get_all_files(folder_ply)
         print(f"处理的分块数量: {len(all_files)}")

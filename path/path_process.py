@@ -12,6 +12,23 @@ def find_str_in_strlist(stri, strlist):
             str_ids.append(i)
     return str_ids
 
+
+def get_all_files_ext(root_folder, ext='.obj'):
+    '''
+    获取多级文件夹中所有obj文件（使用os.walk方式）
+    root_folder: 根文件夹路径
+    return: obj文件路径列表
+    '''
+    import os
+
+    obj_files = []
+    # 方法2：使用os.walk遍历
+    for root, dirs, files in os.walk(root_folder):
+        for file in files:
+            if file.lower().endswith(ext):  # 不区分大小写
+                obj_files.append(os.path.join(root, file))
+    return obj_files
+
 def get_all_files(folder_path):
     '''
     获取所有文件
