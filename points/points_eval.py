@@ -7,9 +7,9 @@
     eval_result         根据评价矩阵，计算准确率、召回率、iou
     label_eval          输入两个label,写出评价结果，并返回混淆矩阵
     labels_file_eval    评估1个文件的两组标签
-    labels_file_folder_eval  批量比较两个文件夹下的标签
-    files_eval          评估两个文件，支持的格式参考 data_parse_3d.parse_3d_cloud_file
-    folder_eval         两个文件夹对应文件对比评估，并最后返回所有结果
+    labels_file_folder_eval  比较多个文件的两个标签
+    files_eval          评估一对文件，各自一个指定标签的精度
+    folder_eval         评估一对文件夹，同名文件各自一个指定标签的精度
 '''
 
 import warnings
@@ -134,10 +134,105 @@ def label_eval(label1, label2, classNum=4):
         print(
             f'class{classi}: recall {score_rec[classi]:.1%}, precision {score_pre[classi]:.1%}, iou {score_iou[classi]:.1%}')
     print(
-        f'mean  : recall {np.mean(score_rec):.1%}, precision {np.mean(score_pre):.1%}, iou {np.mean(score_iou):.1%}')
+        f'mean  : recall {np.mean(score_rec):.1%}, precision {np.mean(score_pre):.1%}, iou {np.mean(score_iou):.1%}')  # TODO : 输出评价，没有剔除空标签。
     return scoreMatrix_i
 
-# 多标签文件比较
+# 俩文件某标签比较
+def files_eval(file1, file2, classNum, label_name1, label_name2, label_dict1={}, label_dict2={}):
+    '''
+    评估1个文件的两组标签
+    paras:
+        file1、file2     文件地址
+        classNum        类别数量
+        label_name1    file1 的指定标签
+        label_name2    file2 的指定标签
+        label_dict1    label_name1字典映射
+        label_dict2    label_name2字典映射
+    return:
+        scoreMatrix_i  评分矩阵
+    '''
+    print(f'\n处理文件: {os.path.split(file1)[1]}')
+    # 1 读取文件
+    points_dict1 = pts_io.parse_cloud_to_dict(file1)
+    points_dict2 = pts_io.parse_cloud_to_dict(file2)
+    if len(points_dict1['coords']) != len(points_dict2['coords']):
+        raise ValueError(f'文件1和文件2点云数量不一致：{file1} {file2}')
+        raise ValueError(f'文件1和文件2点云数量不一致：{file1} {file2}')
+    else:
+        print(f"点云数量： {len(points_dict1['coords'])}")
+
+    # 2 获取标签
+    if label_name1 not in points_dict1:
+        raise ValueError(f'文件 {file1} 没有 {label_name1} 标签')
+    if label_name2 not in points_dict2:
+        raise ValueError(f'文件 {file2} 没有 {label_name2} 标签')
+
+    labels1 = points_dict1[label_name1]
+    labels2 = points_dict2[label_name2]
+
+    # 3 标签重映射
+    labels1 = label_change(labels1, label_dict1)
+    labels2 = label_change(labels2, label_dict2)
+
+    # 比较两个label
+    scoreMatrix_i = label_eval(labels1, labels2, classNum)
+
+    return scoreMatrix_i
+
+# 俩文件夹比较
+def folder_eval(folder1, folder2, classNum, label_name1, label_name2, label_dict1=None, label_dict2=None):
+    '''
+    两个文件夹对应文件对比评估，并最后返回所有结果。
+    注意：
+        TODO: 【非标准数据】只支持单标签，读入的第一个标签。
+        0）兼容混合多种格式匹配，但是匹配文件格式相同（避免同名不同格式的文件为不同文件。如p1.pcd和P2.pcd）
+        1）默认两个文件夹中比较的文件同名！
+        2）在folder2 中找 folder1中同名文件
+        3) 当前不支持多层文件夹，需要的话重新开发一个功能：【multifolder_eval】-可参考
+        4）标签若没对齐，记得修改！！（如车辆标注标签3，推理标签1：labels1 = labels1 / 3 ）
+        5) 优化:classnum改为字典:前后类别标签对应关系,如{0:0,1:3}
+    '''
+    if label_dict1 is None:
+        label_dict1 = {}
+    if label_dict2 is None:
+        label_dict2 = {}
+
+    # 1 返回文件夹列表
+    formats = ['.ply', '.pcd']
+    file_list1 = pth_process.get_files_by_format(folder1, formats)
+    file_list2 = pth_process.get_files_by_format(folder2, formats)
+    if not os.path.exists(folder1):
+        raise ValueError(f'地址找不到文件夹：{folder1}')
+    if not os.path.exists(folder2):
+        raise ValueError(f'地址找不到文件夹：{folder2}')
+    if len(file_list1) == 0:
+        raise ValueError(f'地址找不到目标格式的文件：{folder1}')
+    if len(file_list2) == 0:
+        raise ValueError(f'地址找不到目标格式的文件：{folder2}')
+    # 2 计算IOU
+    scoreMatrix = np.zeros((classNum, classNum), dtype='int')  # 记录精度评价二维矩阵[4][4] ,【真值标签】【推理标签】
+    for file_ext2 in file_list2:
+        path_temp, name_ext2 = os.path.split(file_ext2)
+        file_ext2 = os.path.join(folder2, name_ext2)
+        item_list = pth_process.find_str_in_strlist(name_ext2, file_list1)
+        if len(item_list)>1:
+            print(f"文件匹配到多个！")
+        elif len(item_list)==0:
+            raise FileNotFoundError(f'没有匹配文件{name_ext2}')
+        file_ext1 = os.path.join(folder1, file_list1[item_list[0]])
+        scoreMatrix_i = files_eval(file_ext1, file_ext2, classNum, label_name1, label_name2, label_dict1, label_dict2)
+        scoreMatrix += scoreMatrix_i
+
+    # 评估所有场景
+    score_rec, score_pre, score_iou = eval_result(scoreMatrix, classNum)
+    print(f"\n所有场景结果如下:")
+    for classi in range(classNum):
+        print(
+            f'class{classi}: recall {score_rec[classi]:.1%}, precision {score_pre[classi]:.1%}, iou {score_iou[classi]:.1%}')
+    print(f'mRecall {score_rec.mean():.1%}, mPrecision {score_pre.mean():.1%}, mIOU {score_iou.mean():.1%}')
+
+# 1 文件内多标签比较
+# 1.1 单文件多标签比较
 def labels_file_eval(file, classNum, label_name1, label_name2, label_dict1={}, label_dict2={}):
     '''
     评估1个文件的两组标签
@@ -172,10 +267,10 @@ def labels_file_eval(file, classNum, label_name1, label_name2, label_dict1={}, l
 
     return scoreMatrix_i
 
-# 多标签文件批量比较
+# 1.2 文件夹内各文件多标签比较
 def labels_file_folder_eval(folder, classNum, label_name1, label_name2, label_dict1={}, label_dict2={}):
     '''
-    批量比较两个文件夹下的标签
+    比较多个文件的两个标签
     paras:
         folder         文件夹
         classNum        对比的类别数量（当前显式传入）
@@ -218,130 +313,6 @@ def labels_file_folder_eval(folder, classNum, label_name1, label_name2, label_di
 
     return total_scoreMatrix
 
-
-
-
-# 俩文件比较
-def files_eval(file1, file2, classNum, label_dict1={}, label_dict2={}):
-    '''
-    评估两个文件，支持的格式参考 data_parse_3d.parse_3d_cloud_file
-    paras:
-        file1           文件1地址
-        file2           文件2地址
-        label_dict1     文件1字典映射
-        label_dict2     文件2字典映射
-        classNum        对比的类别数量（当前显式传入）
-    return
-        scoreMatrix_i   评分矩阵
-    '''
-    _, _, labels1 = pts_io.parse_3d_cloud_file(file1)
-    _, _, labels2 = pts_io.parse_3d_cloud_file(file2)
-    if not isinstance(labels1,np.ndarray):
-        raise ValueError(f'文件1标签解析错误：{file1}')
-    if not isinstance(labels2, np.ndarray):
-        raise ValueError(f'文件2标签解析错误：{file2}')
-    # 3 标签重映射
-    labels1 = label_change(labels1, label_dict1)
-    labels2 = label_change(labels2, label_dict2)
-
-    # 比较两个label
-    scoreMatrix_i = label_eval(labels1, labels2, classNum)
-    return scoreMatrix_i
-
-# 俩文件夹比较
-def folder_eval(folder1, folder2, classNum=2,label_dict1={},label_dict2={}):
-    '''
-    两个文件夹对应文件对比评估，并最后返回所有结果。
-    注意：
-        0）兼容混合多种格式匹配，但是匹配文件格式相同（避免同名不同格式的文件为不同文件。如p1.pcd和P2.pcd）
-        1）默认两个文件夹中比较的文件同名！
-        2）在folder2 中找 folder1中同名文件
-        3) 当前不支持多层文件夹，需要的话重新开发一个功能：【multifolder_eval】-可参考
-        4）标签若没对齐，记得修改！！（如车辆标注标签3，推理标签1：labels1 = labels1 / 3 ）
-        5) 优化:classnum改为字典:前后类别标签对应关系,如{0:0,1:3}
-    '''
-    # 1 返回文件夹列表
-    formats = ['.ply', '.pcd']
-    file_list1 = pth_process.get_files_by_format(folder1, formats)
-    file_list2 = pth_process.get_files_by_format(folder2, formats)
-    if not os.path.exists(folder1):
-        raise ValueError(f'地址找不到文件夹：{folder1}')
-    if not os.path.exists(folder2):
-        raise ValueError(f'地址找不到文件夹：{folder2}')
-    if len(file_list1) == 0:
-        raise ValueError(f'地址找不到目标格式的文件：{folder1}')
-    if len(file_list2) == 0:
-        raise ValueError(f'地址找不到目标格式的文件：{folder2}')
-    # 2 计算IOU
-    scoreMatrix = np.zeros((classNum, classNum), dtype='int')  # 记录精度评价二维矩阵[4][4] ,【真值标签】【推理标签】
-    for name_ext2 in file_list2:
-        # name, ext2 = os.path.splitext(name_ext2)
-        file_ext2 = os.path.join(folder2, name_ext2)
-        item_list = pth_process.find_str_in_strlist(name_ext2, file_list1)
-        if len(item_list)>1:
-            print(f"文件匹配到多个！")
-        elif len(item_list)==0:
-            raise FileNotFoundError(f'没有匹配文件{name_ext2}')
-        file_ext1 = os.path.join(folder1, file_list1[item_list[0]])
-        scoreMatrix_i = files_eval(file_ext1, file_ext2, classNum, label_dict1, label_dict2)
-        scoreMatrix += scoreMatrix_i
-
-    # 评估所有场景
-    score_rec, score_pre, score_iou = eval_result(scoreMatrix, classNum)
-    print(f"\n所有场景结果如下:")
-    for classi in range(classNum):
-        print(
-            f'class{classi}: recall {score_rec[classi]:.1%}, precision {score_pre[classi]:.1%}, iou {score_iou[classi]:.1%}')
-    print(f'mRecall {score_rec.mean():.1%}, mPrecision {score_pre.mean():.1%}, mIOU {score_iou.mean():.1%}')
-
-def folder_eval_上一版备份(folder1, folder2, classNum=2):
-    '''
-    两个文件夹对应文件对比评估，并最后返回所有结果。
-    注意：
-        0）兼容混合多种格式匹配，但是匹配文件格式相同（避免同名不同格式的文件为不同文件。如p1.pcd和P2.pcd）
-        1）默认两个文件夹中比较的文件同名！
-        2）在folder2 中找 folder1中同名文件
-        3) 当前不支持多层文件夹，需要的话重新开发一个功能：【multifolder_eval】-可参考
-        4）标签若没对齐，记得修改！！（如车辆标注标签3，推理标签1：labels1 = labels1 / 3 ）
-        5) 优化:classnum改为字典:前后类别标签对应关系,如{0:0,1:3}
-    '''
-    # 1 返回文件夹列表
-    formats = ['.ply', '.pcd']
-    file_list1 = pth_process.get_files_by_format(folder1, formats)
-    file_list2 = pth_process.get_files_by_format(folder2, formats)
-    if not os.path.exists(folder1):
-        raise ValueError(f'地址找不到文件夹：{folder1}')
-    if not os.path.exists(folder2):
-        raise ValueError(f'地址找不到文件夹：{folder2}')
-    if len(file_list1) == 0:
-        raise ValueError(f'地址找不到目标格式的文件：{folder1}')
-    if len(file_list2) == 0:
-        raise ValueError(f'地址找不到目标格式的文件：{folder2}')
-    # 2 计算IOU
-    scoreMatrix = np.zeros((classNum, classNum), dtype='int')  # 记录精度评价二维矩阵[4][4] ,【真值标签】【推理标签】
-    for name_ext2 in file_list2:
-        # name, ext2 = os.path.splitext(name_ext2)
-        file_ext2 = os.path.join(folder2, name_ext2)
-        item_list = pth_process.find_str_in_strlist(name_ext2, file_list1)
-        if len(item_list)>1:
-            print(f"文件匹配到多个！")
-        elif len(item_list)==0:
-            raise FileNotFoundError(f'没有匹配文件{name_ext2}')
-        file_ext1 = os.path.join(folder1, file_list1[item_list[0]])
-        coords1, colors1, labels1 = pts_io.parse_3d_cloud_file(file_ext1)
-        coords2, colors2, labels2 = pts_io.parse_3d_cloud_file(file_ext2)
-        labels1 = labels1 / 3  # 注意label是否对应正确！
-        # 比较两个label
-        scoreMatrix_i = label_eval(labels1, labels2, classNum=2)
-        scoreMatrix += scoreMatrix_i
-
-    # 评估所有场景
-    score_rec, score_pre, score_iou = eval_result(scoreMatrix, classNum)
-    print(f"\n所有场景结果如下:")
-    for classi in range(classNum):
-        print(
-            f'class{classi}: recall {score_rec[classi]:.1%}, precision {score_pre[classi]:.1%}, iou {score_iou[classi]:.1%}')
-    print(f'mRecall {score_rec.mean():.1%}, mPrecision {score_pre.mean():.1%}, mIOU {score_iou.mean():.1%}')
 
 def labeled_data_standard(file, file_output, label_change_dict):
     '''
@@ -493,7 +464,7 @@ if __name__ == '__main__':
             for name_ext in file_list:
                 file_label_info(os.path.join(folder, name_ext), label_name, label_dict=label_dict.label_map_l12v1_to_l05v1)
 
-    if True:  # 标签转换
+    if False:  # 标签转换
         folder_from = r'H:\TempProcess\20251224数据处理\2合并标签'
         folder_to = r'H:\TempProcess\20251224数据处理\labelv05_V2'
         label_from = "label05_V1"  # 源标签
@@ -515,13 +486,23 @@ if __name__ == '__main__':
             labels_file_folder_eval(folder, classNum=5,  # TODO: 对于标准标签后续优化去除手动设置类别数量？是否可行？还是分开标准标签、和随机标签
                                     label_name1=element_name + "_"+"label05_V1", label_name2=element_name + "_"+"label05_V1_pred",
                                     label_dict1={}, label_dict2={})  # TODO: 改成自适应选择标签，参考preprocess中代码
-    if False:
-        # 1）6分类数据处理 ["background", "building", "car", "vegetation", "farmland", "grass"]
-        label_dict_input = label_dict.label_map_l12v1_to_l06v1
-        file1 = r'/media/xuek/Data210/数据集/训练集/重建数据_版本2025.10.15/val/39PTY2.ply'
-        file2 = r'/home/xuek/桌面/TestData/临时测试区/重建数据_版本2025.10.15_val_weight20251029/val_39PTY2.ply'
-        file_eval(file1, file2, classNum=6, label_dict1=label_dict_6class, label_dict2={})
-        # folder_eval(folder1, folder2, classNum=2, label_dict1={}, label_dict2={})
+
+    if True:  # 对比两个文件的两个标签
+        if False:  # 单组文件比较
+            file1 =r'J:\DATASET\BIMTwins\标准数据集\01JXY.ply'
+            file2 = r'J:\DATASET\BIMTwins\V2025.10.15\01JXY.ply'
+            label_name1 = "label"+'_'+'label12_V1'  # label
+            label_name2 = 'vertex'+'_'+'class'  # vertex
+            files_eval(file1, file2, classNum=12, label_name1=label_name1, label_name2=label_name2, label_dict1={}, label_dict2={})
+
+        else:  # 文件夹批量比较
+            folder1 = r'J:\DATASET\BIMTwins\标准数据集'
+            folder2 = r'J:\DATASET\BIMTwins\V2025.10.15'
+            label_name1 = "label" + '_' + 'label12_V1'  # label
+            label_name2 = 'vertex' + '_' + 'class'  # vertex
+            folder_eval(folder1, folder2, classNum=12, label_name1=label_name1, label_name2=label_name2, label_dict1={}, label_dict2={})
+            # folder_eval(folder1, folder2, classNum=12, label_dict1={}, label_dict2={})
+
 
     if False:  # 批量对比两个文件夹下的文件
         # TODO: 老版本，新版本验证通过可删除
